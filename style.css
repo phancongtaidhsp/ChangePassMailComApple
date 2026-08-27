@@ -24,6 +24,10 @@
   font-size: 30px;
   color: #015c18;
 }
+.unchecked{
+  font-size: 30px;
+  color: #909090;
+}
 .mr {
   margin: 5px 0px;
 }

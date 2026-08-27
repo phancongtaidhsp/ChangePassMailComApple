@@ -4,7 +4,7 @@ const electron = require('electron');
 const LineByLineReader = require('line-by-line');
 const fs = require('fs-extra');
 const { sampleSize } = require('lodash');
-const { checkEmailWithRetry } = require('./action');
+const { checkLoginHotmailWithRetry } = require('./action');
 const ipc = electron.ipcMain;
 
 let win;
@@ -54,8 +54,8 @@ const run = async function (pathFileMail, pathFileProxy, thread) {
   win.webContents.send('disable', true);
   let listProxy = fs.readFileSync(pathFileProxy, 'utf8');
   listProxy = listProxy.split(/\r?\n/);
-  let outvalid = `${__dirname}\\..\\extraResources\\CheckValidApple\\valid.txt`;
-  let outinvalid = `${__dirname}\\..\\extraResources\\CheckValidApple\\invalid.txt`;
+  let outvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\valid.txt`;
+  let outinvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\invalid.txt`;
   let startIndex = 0;
   lr = new LineByLineReader(pathFileMail, {
     start: currentIndex
@@ -77,22 +77,24 @@ const run = async function (pathFileMail, pathFileProxy, thread) {
     try {
       (async () => {
         let proxiesApple = sampleSize(listProxy, 5);
-        let { status, email } = await checkEmailWithRetry(mail, proxiesApple);
-        if (status == "email_success") {
+        let { status, email } = await checkLoginHotmailWithRetry(mail, proxiesApple);
+        if (status == "valid") {
           let result = `${email}|${status}` + "\n";
           fs.appendFileSync(outvalid, result);
           win.webContents.send('valid', 1, pause);
           lr.resume();
-        } else if (status == "email_not_found" || status == "failed") {
+        } else if (status == "invalid") {
           let result = `${email}|${status}` + "\n";
           fs.appendFileSync(outinvalid, result);
           win.webContents.send('invalid', 1, pause);
           lr.resume();
         } else {
+          win.webContents.send('unchecked', 1, pause);
           lr.resume();
         }
       })()
     } catch (error) {
+      win.webContents.send('unchecked', 1, pause);
       lr.resume();
       console.log(error);
     }
@@ -123,7 +125,7 @@ function isFileExists(pathFile) {
 }
 
 ipc.on('start', async function (event, pathFileMail, pathFileProxy, thread) {
-  let pathFolder = `${__dirname}\\..\\extraResources\\CheckValidApple`;
+  let pathFolder = `${__dirname}\\..\\extraResources\\CheckLoginHotmail`;
   let incompleteFolder = isFileExists(pathFolder);
   if (incompleteFolder) {
     fs.mkdirSync(pathFolder);
@@ -147,8 +149,8 @@ ipc.on('pause', async function (event) {
 })
 
 const xuatKetQua = (pathFileMail) => {
-  let outvalid = `${__dirname}\\..\\extraResources\\CheckValidApple\\valid.txt`;
-  let outinvalid = `${__dirname}\\..\\extraResources\\CheckValidApple\\invalid.txt`;
+  let outvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\valid.txt`;
+  let outinvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\invalid.txt`;
   let incompleteFile1 = isFileExists(pathFileMail);
   if (incompleteFile1) {
     win.webContents.send('checkfiles', incompleteFile1);

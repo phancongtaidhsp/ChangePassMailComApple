@@ -20,24 +20,39 @@ window.addEventListener('DOMContentLoaded', () => {
   ipcRenderer.on('invalid', function (e, step, pause) {
     let invalidStep = parseInt(document.getElementById(`invalid`).innerText) + step;
     let validStep = parseInt(document.getElementById(`valid`).innerText);
+    let uncheckedStep = parseInt(document.getElementById(`unchecked`).innerText);
     let totalStep = parseInt(document.getElementById(`total`).innerText);
     document.getElementById(`invalid`).innerText = invalidStep;
-    if (pause && invalidStep + validStep === totalStep) {
+    if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
-    } else if (!pause && invalidStep + validStep === totalStep) {
+    } else if (!pause && invalidStep + validStep + uncheckedStep === totalStep) {
       showThongBao('alert-success', 'Đã chạy hết file data')
     }
   })
   ipcRenderer.on('valid', function (e, step, pause) {
     let invalidStep = parseInt(document.getElementById(`invalid`).innerText);
     let validStep = parseInt(document.getElementById(`valid`).innerText) + step;
+    let uncheckedStep = parseInt(document.getElementById(`unchecked`).innerText);
     let totalStep = parseInt(document.getElementById(`total`).innerText);
     document.getElementById(`valid`).innerText = validStep;
-    if (pause && invalidStep + validStep === totalStep) {
+    if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
-    } else if (!pause && invalidStep + validStep === totalStep) {
+    } else if (!pause && invalidStep + validStep + uncheckedStep === totalStep) {
+      showThongBao('alert-success', 'Đã chạy hết file data')
+    }
+  })
+  ipcRenderer.on('unchecked', function (e, step, pause) {
+    let invalidStep = parseInt(document.getElementById(`invalid`).innerText);
+    let validStep = parseInt(document.getElementById(`valid`).innerText);
+    let uncheckedStep = parseInt(document.getElementById(`unchecked`).innerText) + step;
+    let totalStep = parseInt(document.getElementById(`total`).innerText);
+    document.getElementById(`unchecked`).innerText = uncheckedStep;
+    if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
+      document.getElementById('thongbao').classList.add('hidden')
+      document.getElementById('start').disabled = false;
+    } else if (!pause && invalidStep + validStep + uncheckedStep === totalStep) {
       showThongBao('alert-success', 'Đã chạy hết file data')
     }
   })

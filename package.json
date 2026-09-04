@@ -1,7 +1,7 @@
 {
-  "name": "validapple2026",
+  "name": "validhotmailpass2026",
   "version": "1.0.0",
-  "description": "validapple2026",
+  "description": "validhotmailpass2026",
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
@@ -25,8 +25,8 @@
     "electron-rebuild": "^2.0.1"
   },
   "build": {
-    "appId": "tai.pc.validapple2026",
-    "productName": "Check Valid Apple (2026. v1)",
+    "appId": "tai.pc.validhotmailpass2026",
+    "productName": "Check Valid Hotmail (2026. v1)",
     "target": "nsis",
     "nsis": {
       "allowToChangeInstallationDirectory": true,

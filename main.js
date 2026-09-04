@@ -67,7 +67,7 @@ const run = async function (pathFileMail, pathFileProxy, thread) {
   });
 
   lr.on('line', async function (info) {
-    const [mail] = info.split("|");
+    const [mail, pass] = info.split("|");
     if (pause) {
       isDone = false;
       lr.close();
@@ -77,14 +77,14 @@ const run = async function (pathFileMail, pathFileProxy, thread) {
     try {
       (async () => {
         let proxiesApple = sampleSize(listProxy, 5);
-        let { status, email } = await checkLoginHotmailWithRetry(mail, proxiesApple);
+        let { status, email, password } = await checkLoginHotmailWithRetry(mail, pass, proxiesApple);
         if (status == "valid") {
-          let result = `${email}|${status}` + "\n";
+          let result = `${email}|${password}|${status}` + "\n";
           fs.appendFileSync(outvalid, result);
           win.webContents.send('valid', 1, pause);
           lr.resume();
         } else if (status == "invalid") {
-          let result = `${email}|${status}` + "\n";
+          let result = `${email}|${password}|${status}` + "\n";
           fs.appendFileSync(outinvalid, result);
           win.webContents.send('invalid', 1, pause);
           lr.resume();

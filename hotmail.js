@@ -218,19 +218,19 @@ class HotmailClass {
       if (credJson?.IfExistsResult === 1)
         return { status: "error", message: "Tài khoản không tồn tại #1" };
 
-      // const proofs = credJson?.Credentials?.OtcLoginEligibleProofs;
-      // if (Array.isArray(proofs)) {
-      //   for (const p of proofs) {
-      //     const display = p?.display?.toString().trim();
-      //     const type = p?.type;
-      //     if (display) {
-      //       if (display.includes("@"))
-      //         return { status: "error", message: `Dính mail khôi phục: ${display}` };
-      //       if (type === 3)
-      //         return { status: "error", message: `Dính SĐT khôi phục: ${display} (Số cuối: ${p?.clearDigits}, Quốc gia: ${p?.ctryISO})` };
-      //     }
-      //   }
-      // }
+      const proofs = credJson?.Credentials?.OtcLoginEligibleProofs;
+      if (Array.isArray(proofs)) {
+        for (const p of proofs) {
+          const display = p?.display?.toString().trim();
+          const type = p?.type;
+          if (display) {
+            if (display.includes("@"))
+              return { status: "error", message: `Dính mail khôi phục: ${display}` };
+            if (type === 3)
+              return { status: "error", message: `Dính SĐT khôi phục: ${display} (Số cuối: ${p?.clearDigits}, Quốc gia: ${p?.ctryISO})` };
+          }
+        }
+      }
 
       logWithTime("info", `${this.username} nhập mật khẩu`);
       const loginResponse = await this._makeRequest({
@@ -269,8 +269,8 @@ class HotmailClass {
         try {
           const sdLogin = JSON.parse(sdLoginMatch[1]);
           const sPageId = sdLogin?.sPageId;
-          if (sPageId === "i5030") return { status: "failed", message: "Sai mật khẩu" };
-          if (sPageId === "i5026") return { status: "failed", message: "Tài khoản không tồn tại #2" };
+          if (sPageId === "i5030") return { status: "error", message: "Sai mật khẩu" };
+          if (sPageId === "i5026") return { status: "error", message: "Tài khoản không tồn tại #2" };
           if (sPageId === "i5245") return { status: "success", message: "Đăng nhập thành công" };
         } catch { }
       }
@@ -283,28 +283,22 @@ class HotmailClass {
       catch { formType = actionMatch[1]; }
 
       logWithTime("info", `${this.username} Form type: ${formType}`);
-      
+
       switch (formType) {
         case "notice":
         case "proofs/Add":
         case "interrupt/passkey":
           return { status: "success", message: "Đăng nhập thành công" };
         case "recover":
-          return { status: "success", message: "Đăng nhập thành công" };
-          // return await this.Unlock2Process();
+          return await this.Unlock2Process();
         case "Abuse":
-          return { status: "success", message: "Đăng nhập thành công" };
-          // return await this.AddPhoneProcess();
+          return await this.AddPhoneProcess();
         case "RecoverAccount":
         case "family/child-consent/child-landing":
-          return { status: "success", message: "Đăng nhập thành công" };
-          // return { status: "error", message: "Không thể mở khóa dạng này" };
+          return { status: "error", message: "Không thể mở khóa dạng này" };
         case "tou/accrue":
         case "profile/accrue":
-          return { status: "success", message: "Đăng nhập thành công" };
-          // return await this.HandleAccrue();
-        case "identity/confirm":
-          return { status: "success", message: "Đăng nhập thành công" };
+          return await this.HandleAccrue();
         default:
           return { status: "error", message: `Form không xác định: ${formType}` };
       }
@@ -1734,5 +1728,4 @@ class HotmailClass {
     return this.recoveryEmail;
   }
 }
-
 module.exports = HotmailClass;

@@ -1,10 +1,11 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
+const readline = require('node:readline');
 const electron = require('electron');
-const LineByLineReader = require('line-by-line');
 const fs = require('fs-extra');
 const { sampleSize } = require('lodash');
 const { checkLoginHotmailWithRetry } = require('./action');
+const { enumerateRemainingLines, runWithConcurrency } = require('./run-concurrency');
 const ipc = electron.ipcMain;
 
 let win;
@@ -13,6 +14,7 @@ let pause = false;
 let currentIndex = 0;
 let startTime = 0;
 let interval;
+let isRunning = false;
 
 function createWindow() {
   // Create the browser window.
@@ -42,80 +44,61 @@ app.on('window-all-closed', () => {
 
 const run = async function (pathFileMail, pathFileProxy, thread) {
   let incompleteFile1 = isFileExists(pathFileMail);
-  let incompleteFile2 = isFileExists(pathFileMail);
+  let incompleteFile2 = isFileExists(pathFileProxy);
   if (incompleteFile1) {
     win.webContents.send('checkfiles', incompleteFile1);
-    return;
+    return false;
   }
   if (incompleteFile2) {
     win.webContents.send('checkfiles', incompleteFile2);
-    return;
+    return false;
   }
-  win.webContents.send('disable', true);
+
   let listProxy = fs.readFileSync(pathFileProxy, 'utf8');
   listProxy = listProxy.split(/\r?\n/);
   let outvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\valid.txt`;
   let outinvalid = `${__dirname}\\..\\extraResources\\CheckLoginHotmail\\invalid.txt`;
-  let startIndex = 0;
-  lr = new LineByLineReader(pathFileMail, {
-    start: currentIndex
-  })
-  lr.on('error', function (err) {
-    // 'err' contains error object
-    win.webContents.send('loi', err);
-    win.webContents.send('disable', false);
-  });
+  const input = fs.createReadStream(pathFileMail, { encoding: 'utf8' });
+  lr = readline.createInterface({ input, crlfDelay: Infinity });
+  const lines = enumerateRemainingLines(lr, currentIndex);
 
-  lr.on('line', async function (info) {
-    const [mail, pass] = info.split("|");
-    if (pause) {
-      isDone = false;
-      lr.close();
+  await runWithConcurrency(lines, async ({ line, lineNumber }) => {
+    currentIndex = lineNumber + 1;
+    win.webContents.send('total', currentIndex);
+
+    const [mail, pass] = line.split('|');
+    if (!mail || pass === undefined) {
+      win.webContents.send('unchecked', 1, pause);
       return;
     }
 
     try {
-      (async () => {
-        let proxiesApple = sampleSize(listProxy, 5);
-        let { status, email, password } = await checkLoginHotmailWithRetry(mail, pass, proxiesApple);
-        if (status == "valid") {
-          let result = `${email}|${password}|${status}` + "\n";
-          fs.appendFileSync(outvalid, result);
-          win.webContents.send('valid', 1, pause);
-          lr.resume();
-        } else if (status == "invalid") {
-          let result = `${email}|${password}|${status}` + "\n";
-          fs.appendFileSync(outinvalid, result);
-          win.webContents.send('invalid', 1, pause);
-          lr.resume();
-        } else {
-          win.webContents.send('unchecked', 1, pause);
-          lr.resume();
-        }
-      })()
+      const proxiesHotmail = sampleSize(listProxy, 5);
+      const { status, email, password } = await checkLoginHotmailWithRetry(
+        mail,
+        pass,
+        proxiesHotmail
+      );
+
+      if (status === 'valid') {
+        fs.appendFileSync(outvalid, `${email}|${password}|${status}\n`);
+        win.webContents.send('valid', 1, pause);
+      } else if (status === 'invalid') {
+        fs.appendFileSync(outinvalid, `${email}|${password}|${status}\n`);
+        win.webContents.send('invalid', 1, pause);
+      } else {
+        win.webContents.send('unchecked', 1, pause);
+      }
     } catch (error) {
       win.webContents.send('unchecked', 1, pause);
-      lr.resume();
       console.log(error);
     }
-
-    if (startIndex >= thread - 1) {
-      lr.pause()
-    } else {
-      startIndex++;
-    }
-    currentIndex++;
-    win.webContents.send('total', currentIndex);
+  }, {
+    concurrency: thread,
+    shouldStop: () => pause
   });
 
-
-  lr.on('end', async function () {
-    // All lines are read, file is closed now.
-    if (interval) {
-      clearInterval(interval)
-    }
-    win.webContents.send('disable', false);
-  });
+  return true;
 }
 
 function isFileExists(pathFile) {
@@ -125,17 +108,45 @@ function isFileExists(pathFile) {
 }
 
 ipc.on('start', async function (event, pathFileMail, pathFileProxy, thread) {
-  let pathFolder = `${__dirname}\\..\\extraResources\\CheckLoginHotmail`;
-  let incompleteFolder = isFileExists(pathFolder);
-  if (incompleteFolder) {
-    fs.mkdirSync(pathFolder);
-  }
+  if (isRunning) return;
+
+  isRunning = true;
   pause = false;
-  interval = setInterval(() => {
-    startTime++;
-    win.webContents.send('time', startTime);
-  }, 1000);
-  run(pathFileMail, pathFileProxy, thread);
+  win.webContents.send('disable', true);
+
+  try {
+    let pathFolder = `${__dirname}\\..\\extraResources\\CheckLoginHotmail`;
+    let incompleteFolder = isFileExists(pathFolder);
+    if (incompleteFolder) {
+      fs.mkdirSync(pathFolder);
+    }
+
+    interval = setInterval(() => {
+      startTime++;
+      win.webContents.send('time', startTime);
+    }, 1000);
+
+    const completed = await run(pathFileMail, pathFileProxy, thread);
+    if (completed && !pause) {
+      win.webContents.send('done', true);
+    }
+  } catch (error) {
+    win.webContents.send('loi', error.message || String(error));
+  } finally {
+    if (lr) {
+      lr.close();
+      if (lr.input && !lr.input.destroyed) {
+        lr.input.destroy();
+      }
+      lr = null;
+    }
+    if (interval) {
+      clearInterval(interval);
+      interval = null;
+    }
+    isRunning = false;
+    win.webContents.send('disable', false);
+  }
 })
 
 ipc.on('pause', async function (event) {
@@ -143,6 +154,11 @@ ipc.on('pause', async function (event) {
     pause = true;
     if (interval) {
       clearInterval(interval)
+      interval = null;
+    }
+    lr.close();
+    if (lr.input && !lr.input.destroyed) {
+      lr.input.destroy();
     }
     win.webContents.send('info', "Đang tạm dừng...Vui lòng chờ...", true);
   }

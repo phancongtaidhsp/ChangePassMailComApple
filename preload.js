@@ -26,8 +26,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
-    } else if (!pause && invalidStep + validStep + uncheckedStep === totalStep) {
-      showThongBao('alert-success', 'Đã chạy hết file data')
     }
   })
   ipcRenderer.on('valid', function (e, step, pause) {
@@ -39,8 +37,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
-    } else if (!pause && invalidStep + validStep + uncheckedStep === totalStep) {
-      showThongBao('alert-success', 'Đã chạy hết file data')
     }
   })
   ipcRenderer.on('unchecked', function (e, step, pause) {
@@ -52,8 +48,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
-    } else if (!pause && invalidStep + validStep + uncheckedStep === totalStep) {
-      showThongBao('alert-success', 'Đã chạy hết file data')
     }
   })
   ipcRenderer.on('disable', function (e, isDisable) {

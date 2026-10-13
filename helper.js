@@ -1,5 +1,6 @@
 const axios = require('axios-https-proxy-fix');
 const axiosDefault = require('axios');
+const { toAxiosProxy } = require('./proxy');
 
 const instance = axios.create({
   timeout: 15000,
@@ -9,11 +10,35 @@ const instanceDefault = axiosDefault.create({
   timeout: 15000,
 })
 
+const OTP_WAIT_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 15000;
+
 const delay = (ms) => {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-const getLastSecurityCodeMailByFviainboxes = async (proxy, email) => {
+const getRemainingTimeout = (deadline) => {
+  return Math.max(1, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()));
+}
+
+const delayBeforeNextOtpAttempt = async (deadline, delayMs, signal) => {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0 || signal?.aborted) return;
+
+  await new Promise(resolve => {
+    const timeoutId = setTimeout(finish, Math.min(delayMs, remaining));
+
+    function finish() {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    }
+
+    signal?.addEventListener('abort', finish, { once: true });
+  });
+}
+
+const getLastSecurityCodeMailByFviainboxes = async (proxy, email, timeout, signal) => {
   let username = email.split("@")[0];
   let domain = email.split("@")[1];
   return new Promise((resolve) => {
@@ -24,7 +49,9 @@ const getLastSecurityCodeMailByFviainboxes = async (proxy, email) => {
         'accept': 'application/ld+json',
         'Content-Type': 'application/ld+json',
         'Authorization': `Bearer af2b556e5e719052ca9193bace296b4fe9015bdc6c2c6ec28447d57c56187941`
-      }
+      },
+      timeout,
+      signal,
     };
     if (proxy) {
       options.proxy = proxy;
@@ -48,7 +75,7 @@ const getLastSecurityCodeMailByFviainboxes = async (proxy, email) => {
   })
 }
 
-const getCodeFviainboxes = async (proxy, email, id) => {
+const getCodeFviainboxes = async (proxy, email, id, timeout, signal) => {
   let username = email.split("@")[0];
   let domain = email.split("@")[1];
   return new Promise((resolve) => {
@@ -59,7 +86,9 @@ const getCodeFviainboxes = async (proxy, email, id) => {
         'accept': 'application/ld+json',
         'Content-Type': 'application/ld+json',
         'Authorization': `Bearer af2b556e5e719052ca9193bace296b4fe9015bdc6c2c6ec28447d57c56187941`
-      }
+      },
+      timeout,
+      signal,
     };
     if (proxy) {
       options.proxy = proxy;
@@ -83,47 +112,41 @@ const getCodeFviainboxes = async (proxy, email, id) => {
   })
 }
 
-const getCodeFviainboxesByEmail = async (email, proxyString) => {
-  let proxy = null;
-  if (proxyString) {
-    const proxyArr = proxyString.split(":");
-    proxy = {
-      protocol: 'http',
-      host: proxyArr[0],
-      port: parseInt(proxyArr[1]),
-      ...(proxyArr[2] && {
-        auth: { username: proxyArr[2], password: proxyArr[3] }
-      })
-    }
-  }
+const getCodeFviainboxesByEmail = async (email, proxyString, signal) => {
+  const proxy = toAxiosProxy(proxyString);
+  const deadline = Date.now() + OTP_WAIT_TIMEOUT_MS;
   let id = null;
-  for (let i = 0; i < 5; i++) {
-    id = await getLastSecurityCodeMailByFviainboxes(proxy, email);
+
+  while (Date.now() < deadline && !signal?.aborted) {
+    id = await getLastSecurityCodeMailByFviainboxes(proxy, email, getRemainingTimeout(deadline), signal);
     if (id) {
       break;
     }
-    await delay(3000);
+    await delayBeforeNextOtpAttempt(deadline, 3000, signal);
   }
+
   if (id) {
-    for (let i = 0; i < 3; i++) {
-      let code = await getCodeFviainboxes(proxy, email, id);
+    while (Date.now() < deadline && !signal?.aborted) {
+      let code = await getCodeFviainboxes(proxy, email, id, getRemainingTimeout(deadline), signal);
       if (code) {
         return code;
       }
-      await delay(2000);
+      await delayBeforeNextOtpAttempt(deadline, 2000, signal);
     }
   }
   return null;
 }
 
-const tryGetCodeSmvMailByEmail = async (proxy, email) => {
+const tryGetCodeSmvMailByEmail = async (proxy, email, timeout, signal) => {
   return new Promise((resolve) => {
     var options = {
       method: 'GET',
-      url: `https://smvmail.com/api/email?page=1&q=&email=${email}`,
+      url: `https://api.smvmail.com/email?page=1&q=&email=${email}`,
       headers: {
         'accept': 'application/json, text/plain, */*'
-      }
+      },
+      timeout,
+      signal,
     };
     if (proxy) {
       options.proxy = proxy;
@@ -151,31 +174,21 @@ const tryGetCodeSmvMailByEmail = async (proxy, email) => {
         }
         resolve(code);
       }).catch((e) => {
-        console.log(e);
         resolve(null);
       });
   })
 }
 
-const getCodeSmvMailByEmail = async (email, proxyString) => {
-  let proxy = null;
-  if (proxyString) {
-    const proxyArr = proxyString.split(":");
-    proxy = {
-      protocol: 'http',
-      host: proxyArr[0],
-      port: parseInt(proxyArr[1]),
-      ...(proxyArr[2] && {
-        auth: { username: proxyArr[2], password: proxyArr[3] }
-      })
-    }
-  }
-  for (let i = 0; i < 5; i++) {
-    let code = await tryGetCodeSmvMailByEmail(proxy, email);
+const getCodeSmvMailByEmail = async (email, proxyString, signal) => {
+  const proxy = toAxiosProxy(proxyString);
+  const deadline = Date.now() + OTP_WAIT_TIMEOUT_MS;
+
+  while (Date.now() < deadline && !signal?.aborted) {
+    let code = await tryGetCodeSmvMailByEmail(proxy, email, getRemainingTimeout(deadline), signal);
     if (code) {
       return code;
     }
-    await delay(3000);
+    await delayBeforeNextOtpAttempt(deadline, 3000, signal);
   }
   return null;
 }
@@ -268,7 +281,8 @@ const findCodeTmEmail = async (token) => {
 }
 
 // (async () => {
-//   await getUrlViaOauth2("jenny_busbengtssson@hotmail.com", "M.C506_BAY.0.U.-CkqXZ62y6*87k2lDfOOxJ84v6hl1KB8CAQK!9SPM0Wqp1Xp86STKj!PZMX9QSoc2kvLgFSMqbE7i!Cz4hJcu37IQ9Rj5zkbh1TvJ46Pcd!Tm87*omyK4WSSsmb5ZMYzNfMmubiAE84N3l47bLLeeGlFqpsIsUuwLe8vLffyB3gkS!ftiWSAK797DxtULrxDRJ4kT5MJ1B2BSnyGXaNN7!3tDi!Huso58L52H4QgpkL0!MsCIi5wZZCpOcrmtpFog178XNrGSex2OMA6AlgRp1u4ZCLtIXTmSKiWRl48nEiSGXeCvv08q97ajWFjyijlfwOexFsDsDMwi0G0jhC4crVCDv2baOCBfkdUieNh3Ks6*lHAV22Uet81GSJmUzMIn2Y2bbDEJYVeF7Tt!IQNBZunKAsUrdzegB5EJwzsU06R2D6pTJkFkFN*nLUXZtLXrgg$$|2429d14c-f4c7-495c-8894-956e92597c34")
+//   let code = await getCodeSmvMailByEmail("jmhernadez_29vb55678@smvmail.com", "as.lumiproxy.io:5888:lumi-lumip3jxa8qy4v9_area-US:NUZnacBTmBasd123")
+//   console.log(code);
 // })()
 
 module.exports = {

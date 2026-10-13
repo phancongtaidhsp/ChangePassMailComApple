@@ -20,8 +20,8 @@
     <button id="pause" type="button" class="button btn btn-danger">Pause</button>
     <button id="result" class="button btn btn-info">Xuất kết quả</button>
     <div class="value">
-      <input type="input" id="filepathmail" placeholder="Đường dẫn file mail">
-      <input type="input" id="filepathproxy" placeholder="Đường dẫn file proxy">
+      <input type="input" id="filepathmail" placeholder="Đường dẫn file mail" value="/Users/taiphan/Desktop/ToolHotmail/data/data.txt">
+      <input type="input" id="filepathproxy" placeholder="Đường dẫn file proxy" value="/Users/taiphan/Desktop/ToolHotmail/data/proxy.txt">
       <input type="input" id="thread" placeholder="Số luồng">
     </div>
     <div class="value">
@@ -30,22 +30,22 @@
         <span id="time">0s</span>
       </div>
     </div>
-    <div class="value">
-      <div class="valid">
-        <span>Valid: </span>
-        <span id="valid">0</span>
+    <div class="value result-summary">
+      <div class="result-card changed-pass">
+        <span class="result-label">Changed Pass</span>
+        <span id="changed-pass" class="result-count">0</span>
       </div>
-      <div class="invalid">
-        <span>Invalid: </span>
-        <span id="invalid">0</span>
+      <div class="result-card login-ok">
+        <span class="result-label">Login OK</span>
+        <span id="login-ok" class="result-count">0</span>
       </div>
-      <div class="unchecked">
-        <span>Unchecked: </span>
-        <span id="unchecked">0</span>
+      <div class="result-card failed">
+        <span class="result-label">Failed</span>
+        <span id="failed" class="result-count">0</span>
       </div>
-      <div class="total">
-        <span>Total: </span>
-        <span id="total">0</span>
+      <div class="result-card total-result">
+        <span class="result-label">Total</span>
+        <span id="total" class="result-count">0</span>
       </div>
     </div>
   </div>

@@ -17,35 +17,42 @@ window.addEventListener('DOMContentLoaded', () => {
   ipcRenderer.on('total', function (e, total) {
     document.getElementById(`total`).innerText = total;
   })
-  ipcRenderer.on('invalid', function (e, step, pause) {
-    let invalidStep = parseInt(document.getElementById(`invalid`).innerText) + step;
-    let validStep = parseInt(document.getElementById(`valid`).innerText);
-    let uncheckedStep = parseInt(document.getElementById(`unchecked`).innerText);
+  ipcRenderer.on('reset-progress', function () {
+    document.getElementById('changed-pass').innerText = '0';
+    document.getElementById('login-ok').innerText = '0';
+    document.getElementById('failed').innerText = '0';
+    document.getElementById('total').innerText = '0';
+    document.getElementById('time').innerText = '0s';
+  })
+  ipcRenderer.on('login-ok', function (e, step, pause) {
+    let loginOkStep = parseInt(document.getElementById('login-ok').innerText) + step;
+    let changedPassStep = parseInt(document.getElementById('changed-pass').innerText);
+    let failedStep = parseInt(document.getElementById('failed').innerText);
     let totalStep = parseInt(document.getElementById(`total`).innerText);
-    document.getElementById(`invalid`).innerText = invalidStep;
-    if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
+    document.getElementById('login-ok').innerText = loginOkStep;
+    if (pause && loginOkStep + changedPassStep + failedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
     }
   })
-  ipcRenderer.on('valid', function (e, step, pause) {
-    let invalidStep = parseInt(document.getElementById(`invalid`).innerText);
-    let validStep = parseInt(document.getElementById(`valid`).innerText) + step;
-    let uncheckedStep = parseInt(document.getElementById(`unchecked`).innerText);
+  ipcRenderer.on('changed-pass', function (e, step, pause) {
+    let loginOkStep = parseInt(document.getElementById('login-ok').innerText);
+    let changedPassStep = parseInt(document.getElementById('changed-pass').innerText) + step;
+    let failedStep = parseInt(document.getElementById('failed').innerText);
     let totalStep = parseInt(document.getElementById(`total`).innerText);
-    document.getElementById(`valid`).innerText = validStep;
-    if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
+    document.getElementById('changed-pass').innerText = changedPassStep;
+    if (pause && loginOkStep + changedPassStep + failedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
     }
   })
-  ipcRenderer.on('unchecked', function (e, step, pause) {
-    let invalidStep = parseInt(document.getElementById(`invalid`).innerText);
-    let validStep = parseInt(document.getElementById(`valid`).innerText);
-    let uncheckedStep = parseInt(document.getElementById(`unchecked`).innerText) + step;
+  ipcRenderer.on('failed', function (e, step, pause) {
+    let loginOkStep = parseInt(document.getElementById('login-ok').innerText);
+    let changedPassStep = parseInt(document.getElementById('changed-pass').innerText);
+    let failedStep = parseInt(document.getElementById('failed').innerText) + step;
     let totalStep = parseInt(document.getElementById(`total`).innerText);
-    document.getElementById(`unchecked`).innerText = uncheckedStep;
-    if (pause && invalidStep + validStep + uncheckedStep === totalStep) {
+    document.getElementById('failed').innerText = failedStep;
+    if (pause && loginOkStep + changedPassStep + failedStep === totalStep) {
       document.getElementById('thongbao').classList.add('hidden')
       document.getElementById('start').disabled = false;
     }
@@ -90,14 +97,6 @@ window.addEventListener('DOMContentLoaded', () => {
   })
   ipcRenderer.on('info', function (e, info, noTimeout) {
     showThongBao('alert-info', info, noTimeout)
-    let failStep = parseInt(document.getElementById(`die`).innerText);
-    let successStep = parseInt(document.getElementById(`live`).innerText);
-    let totalStep = parseInt(document.getElementById(`total`).innerText);
-    if (pause && failStep + successStep === totalStep) {
-      document.getElementById('thongbao').classList.add('hidden')
-    } else {
-      document.getElementById('start').disabled = isDisable;
-    }
   })
   ipcRenderer.on('loi', function (e, err) {
     showThongBao('alert-danger', err)

@@ -109,6 +109,10 @@ class MailComClass {
   async CheckEmail(email = this.email) {
     for (let retries = 0; retries <= MAX_RETRIES; retries++) {
       const result = await this._checkEmailOnce(email);
+      // Chỉ giữ phiên khi đã xác định được khả năng đăng ký của email.
+      if (result.status !== 'success' || !['available', 'unavailable'].includes(result.availability)) {
+        this.session = null;
+      }
       if (!result.retryable) return { ...result, retries };
       if (retries === MAX_RETRIES) return { ...result, retries, retryExhausted: true,
         message: `${result.message} Đã hết ${MAX_RETRIES} lần thử lại.` };
@@ -156,7 +160,6 @@ class MailComClass {
           maxResultCountToProduct: { mailcomFree: '4' }, mdhMaxResultCount: '0',
         },
       });
-      if (response.status === 401) this.session = null;
       if (response.status !== 200) return { ...result, ...this._failure(response) };
       const data = response.data;
       if (typeof data?.emailAddressAvailable !== 'boolean' ||

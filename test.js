@@ -1,12 +1,12 @@
-const ProtonMailClass = require("./src/services/protonmail");
+const MailComClass = require("./src/services/mailcom");
 
 async function main() {
-  const protonmail = new ProtonMailClass(
-    null,                            // proxy
-    "taolataiphan@proton.me"            // thay bằng email Proton của bạn
+  const mailcom = new MailComClass(
+    process.env.MAILCOM_PROXY || null, // hoặc thay bằng proxy của bạn
+    process.env.MAILCOM_EMAIL || "your-email@mail.com" // thay bằng email cần kiểm tra
   );
 
-  const result = await protonmail.CheckEmail();
+  const result = await mailcom.CheckEmail();
   console.log(result);
 }
 

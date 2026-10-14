@@ -54,6 +54,7 @@ async function run() {
     assert.equal(unavailable.exists, null, 'Unavailable does not establish a live mailbox');
     assert.equal(calls.length, 1, 'Reuse signup session');
 
+    const validSession = checker.session;
     for (const response of [
       { status: 200, data: { emailAddressAvailable: 'false', requestedEmailAddress: email } },
       { status: 200, data: { emailAddressAvailable: false, requestedEmailAddress: 'other@mail.com' } },
@@ -67,8 +68,10 @@ async function run() {
       { status: 424, data: '' },
     ]) {
       calls = [];
+      checker.session = validSession;
       replies = [response];
       const result = await checker.CheckEmail();
+      assert.equal(checker.session, null, 'Clear session after every inconclusive response');
       assert.equal(result.status, 'error');
       assert.equal(result.exists, null);
       assert.equal(result.available, null);
@@ -80,13 +83,19 @@ async function run() {
 
     calls = [];
     for (const invalid of [null, '', 'invalid', 'a+b@mail.com', 'a@@mail.com', 'a b@mail.com', 'a'.repeat(65) + '@mail.com']) {
+      checker.session = validSession;
       assert.equal((await checker.CheckEmail(invalid)).code, 'INVALID_EMAIL');
+      assert.equal(checker.session, null);
     }
+    checker.session = validSession;
     assert.equal((await checker.CheckEmail('someone@proton.me')).code, 'UNSUPPORTED_DOMAIN');
+    assert.equal(checker.session, null);
+    checker.session = validSession;
     assert.equal((await checker.CheckEmail('someone@gmail.com')).code, 'UNSUPPORTED_DOMAIN');
     assert.equal(calls.length, 0);
 
     calls = [];
+    checker.session = validSession;
     replies = [{ status: 401, data: '' },
       signup({ ...config, core: { ...config.core, version: '8.39.0' } }), availability(true)];
     const renewed = await checker.CheckEmail();
@@ -100,21 +109,24 @@ async function run() {
     transient.session = checker.session;
     for (const status of [302, 403, 408, 429, 500, 502, 503, 504]) {
       calls = []; delays.length = 0;
-      replies = [{ status, data: '', headers: { 'retry-after': '2' } }, availability(true)];
+      replies = [{ status, data: '', headers: { 'retry-after': '2' } }, signup({ ...config, accessToken: `renewed-${status}` }), availability(true)];
       const recoveredHttp = await transient.CheckEmail();
       assert.equal(recoveredHttp.status, 'success');
       assert.equal(recoveredHttp.retries, 1);
-      assert.equal(calls.length, 2);
+      assert.equal(calls.length, 3);
+      assert.equal(calls[1].url, 'https://signup.mail.com/');
+      assert.equal(calls[2].headers.Authorization, `Bearer renewed-${status}`);
       assert.deepEqual(delays, [2000]);
     }
     calls = []; delays.length = 0;
-    replies = Array.from({ length: 4 }, () => ({ status: 403 }));
+    replies = [{ status: 403 }, ...Array.from({ length: 3 }, () => [signup(config), { status: 403 }]).flat()];
     const forbidden = await transient.CheckEmail();
     assert.equal(forbidden.retries, 3);
     assert.equal(forbidden.retryExhausted, true);
     assert.equal(forbidden.availability, 'unknown');
     assert.equal(forbidden.httpStatus, 403);
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 7);
+    assert.equal(transient.session, null);
     assert.deepEqual(delays, [1000, 2000, 4000]);
 
     calls = []; delays.length = 0;
@@ -126,7 +138,7 @@ async function run() {
     assert.equal(redirected.availability, 'unknown');
     assert.equal(redirected.httpStatus, 302);
     assert.equal(calls.length, 4);
-    assert(calls.every(call => call.url === 'https://register-suggest.mail.com/rest/email-alias/availability' && call.maxRedirects === 0));
+    assert(calls.every(call => call.url === 'https://signup.mail.com/' && call.maxRedirects === 0));
     assert.deepEqual(delays, [1000, 2000, 4000]);
 
     calls = []; delays.length = 0;
@@ -190,11 +202,11 @@ async function run() {
     const fresh = new MailCom(null, email, { retryDelayMs: 0 });
     calls = [];
     replies = [networkError('ENOTFOUND'), signup(config), networkError('ECONNRESET'),
-      networkError('ECONNABORTED'), availability(true)];
+      networkError('ECONNABORTED'), signup(config), availability(true)];
     const recovered = await fresh.CheckEmail();
     assert.equal(recovered.status, 'success');
     assert.equal(recovered.retries, 3);
-    assert.equal(calls.length, 5, 'Retry budget shared by signup and availability');
+    assert.equal(calls.length, 6, 'Retry budget shared by signup and availability');
     assert.equal(replies.length, 0);
 
     calls = [];

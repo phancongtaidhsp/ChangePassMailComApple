@@ -1,4 +1,8 @@
-node_modules
-out
-dist
-package-lock.json
+node_modules/
+out/
+dist/
+.DS_Store
+data/*.txt
+!data/emails.example.txt
+results/
+*.log

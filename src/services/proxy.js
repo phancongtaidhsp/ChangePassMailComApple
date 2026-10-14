@@ -24,51 +24,19 @@ function normalizeProxyUrl(proxyValue) {
       proxyUrl = new URL(`http://${rawProxy}`);
     }
   } catch (error) {
-    throw new Error(`Proxy không hợp lệ: ${rawProxy}`);
+    throw new Error("Proxy không hợp lệ. Kiểm tra định dạng trong file proxy.");
   }
 
   if (!["http:", "https:"].includes(proxyUrl.protocol)) {
-    throw new Error(`Chỉ hỗ trợ proxy HTTP/HTTPS: ${rawProxy}`);
+    throw new Error("Chỉ hỗ trợ proxy HTTP/HTTPS.");
   }
 
   const port = Number(proxyUrl.port || (proxyUrl.protocol === "https:" ? 443 : 80));
   if (!proxyUrl.hostname || !Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`Proxy không hợp lệ: ${rawProxy}`);
+    throw new Error("Proxy không hợp lệ. Kiểm tra định dạng trong file proxy.");
   }
 
   return proxyUrl.toString();
 }
 
-function toAxiosProxy(proxyValue) {
-  const normalizedProxy = normalizeProxyUrl(proxyValue);
-  if (!normalizedProxy) return null;
-
-  const proxyUrl = new URL(normalizedProxy);
-  const proxy = {
-    protocol: proxyUrl.protocol.slice(0, -1),
-    host: proxyUrl.hostname,
-    port: Number(proxyUrl.port || (proxyUrl.protocol === "https:" ? 443 : 80)),
-  };
-
-  if (proxyUrl.username) {
-    proxy.auth = {
-      username: decodeProxyCredential(proxyUrl.username),
-      password: decodeProxyCredential(proxyUrl.password),
-    };
-  }
-
-  return proxy;
-}
-
-function decodeProxyCredential(value) {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-module.exports = {
-  normalizeProxyUrl,
-  toAxiosProxy,
-};
+module.exports = { normalizeProxyUrl };

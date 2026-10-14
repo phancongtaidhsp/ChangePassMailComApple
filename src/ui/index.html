@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>Proton Email Checker</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="renderer.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand"><div class="logo" aria-hidden="true">P<span>✓</span></div><div><p class="eyebrow">EMAIL WORKSPACE</p><h1>Proton Email Checker</h1></div></div>
+      <span class="status" id="status">Sẵn sàng</span>
+    </header>
+    <p class="intro">Kiểm tra danh sách email Proton, theo dõi tiến độ và lưu kết quả theo từng lượt.</p>
+    <div class="notice"><strong>Đọc kết quả đúng cách</strong><p>API đăng ký chỉ cho biết tên còn khả dụng hay không. Tên đã dùng hoặc bị giữ lại chưa chứng minh hộp thư đang hoạt động (live). Công cụ không xác nhận khả năng nhận thư.</p></div>
+    <section class="panel" aria-labelledby="setup-title">
+      <div class="section-heading"><h2 id="setup-title">Danh sách & cấu hình</h2><span>TXT · Một email mỗi dòng</span></div>
+      <div class="field"><label for="emailFile">Danh sách email</label><div class="file-row"><input id="emailFile" readonly placeholder="Chọn file email Proton cần kiểm tra"><button id="choose-email" class="secondary">Chọn file</button></div></div>
+      <div class="field"><label for="proxyFile">Proxy <span class="muted">/ tùy chọn</span></label><div class="file-row"><input id="proxyFile" readonly placeholder="Để trống để kết nối trực tiếp"><button id="choose-proxy" class="secondary">Chọn file</button><button id="clear-proxy" class="text-button" aria-label="Bỏ file proxy">Bỏ</button></div></div>
+      <div class="field"><label for="outputRoot">Thư mục kết quả</label><div class="file-row"><input id="outputRoot" readonly placeholder="Documents/ProtonEmailChecker/results"><button id="choose-output" class="secondary">Thay đổi</button></div></div>
+      <div class="controls"><div class="settings"><label for="concurrency">Số luồng <input id="concurrency" type="number" min="1" max="200" value="1"></label><label for="delayMs">Nghỉ mỗi luồng (ms) <input id="delayMs" type="number" min="1000" max="60000" step="500" value="1500"></label></div><div class="actions"><button id="pause" class="secondary" disabled>Tạm dừng</button><button id="resume" class="secondary" hidden>Tiếp tục</button><button id="start" class="primary">Bắt đầu kiểm tra</button></div></div>
+    </section>
+    <section class="stats" aria-label="Thống kê">
+      <div class="stat"><span>Đã kiểm tra</span><strong id="completed">0 <small>/ 0</small></strong><p id="elapsed">00:00</p></div>
+      <div class="stat purple"><span>Không khả dụng</span><strong id="unavailable">0</strong><p>Tên đã dùng / bị giữ lại</p></div>
+      <div class="stat green"><span>Còn đăng ký được</span><strong id="available">0</strong><p>Tên khả dụng theo API</p></div>
+      <div class="stat amber"><span>Chưa xác định</span><strong id="unknown">0</strong><p>Lỗi / giới hạn / xác minh</p></div>
+    </section>
+    <section class="panel results" aria-labelledby="results-title">
+      <div class="section-heading"><h2 id="results-title">Kết quả kiểm tra</h2><button id="open-results" class="secondary" disabled>Mở thư mục kết quả ↗</button></div>
+      <progress id="progress" value="0" max="1" aria-label="Tiến độ"></progress>
+      <p id="message" role="status" aria-live="polite">Chọn danh sách email để bắt đầu. Dòng trống và email trùng sẽ được bỏ qua.</p>
+      <div class="table-wrap"><table><thead><tr><th>Email</th><th>Kết quả</th><th>Chi tiết</th></tr></thead><tbody id="rows"><tr id="empty"><td colspan="3" class="empty">Kết quả mới nhất sẽ xuất hiện tại đây.</td></tr></tbody></table></div>
+      <div class="table-footer"><span>Hiển thị tối đa 100 kết quả mới nhất</span><span id="duplicates">0 email trùng được bỏ qua</span></div>
+    </section>
+    <footer><span>Hỗ trợ proton.me · protonmail.com · protonmail.ch · pm.me</span><span>Kết quả tự lưu · File đầu vào được giữ nguyên</span></footer>
+  </main>
+</body>
+</html>

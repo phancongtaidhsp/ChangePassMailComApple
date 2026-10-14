@@ -1,18 +1,20 @@
 {
-  "name": "changepass-hotmail2026",
+  "name": "proton-email-checker",
   "version": "1.0.0",
-  "description": "changepass-hotmail2026",
-  "main": "main.js",
+  "description": "Kiểm tra khả năng đăng ký email Proton và lưu kết quả theo từng lượt.",
+  "main": "src/main.js",
   "scripts": {
     "start": "electron-forge start",
-    "test": "node test/run-concurrency.test.js",
+    "test": "node test/protonmail.test.js && node test/batch.test.js",
+    "test:ui": "electron test/electron-smoke.js",
+    "check:email": "node test.js",
     "package": "electron-forge package",
-    "make": "electron-forge make",
-    "dist": "electron-builder"
+    "make": "electron-forge make"
   },
   "author": "TaiPC",
   "license": "ISC",
   "devDependencies": {
+    "@electron/fuses": "^1.7.0",
     "@electron-forge/cli": "^7.3.0",
     "@electron-forge/maker-deb": "^7.3.0",
     "@electron-forge/maker-rpm": "^7.3.0",
@@ -20,46 +22,12 @@
     "@electron-forge/maker-zip": "^7.3.0",
     "@electron-forge/plugin-auto-unpack-natives": "^7.3.0",
     "@electron-forge/plugin-fuses": "^7.3.0",
-    "electron": "^29.1.1",
-    "electron-builder": "^22.5.1",
-    "electron-rebuild": "^2.0.1"
-  },
-  "build": {
-    "appId": "tai.pc.changepass-hotmail2026",
-    "productName": "Change Pass Hotmail (2026. v1)",
-    "target": "nsis",
-    "nsis": {
-      "allowToChangeInstallationDirectory": true,
-      "oneClick": false
-    },
-    "extraResources": [
-      "./extraResources/**"
-    ]
+    "electron": "^29.1.1"
   },
   "dependencies": {
-    "@faker-js/faker": "^9.2.0",
-    "@foxt/js-srp": "^0.0.3-patch2",
-    "axios": "^1.4.0",
-    "axios-https-proxy-fix": "^0.17.1",
-    "axios-retry": "^4.5.0",
-    "cheerio": "^1.0.0-rc.12",
-    "child_process": "^1.0.2",
-    "crypto-js": "^4.2.0",
-    "electron-squirrel-startup": "^1.0.0",
-    "file-lines-count": "^1.0.1",
-    "fs-extra": "^9.0.0",
-    "http": "^0.0.1-security",
-    "https": "^1.0.0",
-    "jsonwebtoken": "^9.0.2",
-    "lodash": "^4.17.21",
-    "moment": "^2.30.1",
-    "nopecha": "^1.0.11",
-    "promise.any": "^2.0.6",
-    "puppeteer": "^3.3.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-recaptcha": "^3.6.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "randomatic": "^3.1.1",
-    "user-agents": "^1.1.382"
-  }
+    "axios": "^1.6.7",
+    "https-proxy-agent": "^5.0.1",
+    "electron-squirrel-startup": "^1.0.0"
+  },
+  "productName": "Proton Email Checker"
 }

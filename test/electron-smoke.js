@@ -1,16 +1,16 @@
-// Chạy với Electron, dùng dữ liệu giả; không gọi API Proton.
+// Chạy với Electron, dùng dữ liệu giả; không gọi API mail.com.
 const { app, BrowserWindow, dialog } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
-const ProtonMail = require('../src/services/protonmail');
+const MailCom = require('../src/services/mailcom');
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proton-ui-test-'));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mailcom-ui-test-'));
 app.setPath('userData', path.join(root, 'userData'));
-fs.writeFileSync(path.join(root, 'emails.txt'), 'first@proton.me\nsecond@pm.me\ninvalid@example.com\nfirst@proton.me\n');
-ProtonMail.prototype.CheckEmail = async email => {
+fs.writeFileSync(path.join(root, 'emails.txt'), 'first@mail.com\nsecond@usa.com\ninvalid@example.com\nfirst@mail.com\n');
+MailCom.prototype.CheckEmail = async email => {
   await new Promise(resolve => setTimeout(resolve, 50));
   const availability = email.startsWith('first') ? 'unavailable' : email.startsWith('second') ? 'available' : 'unknown';
   return { email, availability, status: availability === 'unknown' ? 'error' : 'success', exists: null,
@@ -55,11 +55,14 @@ async function run() {
   assert.equal(await evaluate('document.getElementById("open-results").disabled'), false);
   assert.equal(await evaluate('document.getElementById("duplicates").textContent'), '1 email trùng được bỏ qua');
   assert.equal(await evaluate('typeof window.require'), 'undefined');
-  const folder = fs.readdirSync(root).find(name => /^\d{4}-/.test(name));
-  assert(folder);
-  assert.equal(fs.readFileSync(path.join(root, folder, 'pending.txt'), 'utf8'), '');
-  assert(fs.readFileSync(path.join(root, folder, 'summary.txt'), 'utf8').includes('Đã kiểm tra: 3'));
-  assert(fs.readdirSync(path.join(root, folder)).every(name => name.endsWith('.txt')));
+  assert.equal(fs.readFileSync(path.join(root, 'live.txt'), 'utf8'), 'first@mail.com\n');
+  assert.equal(fs.readFileSync(path.join(root, 'die.txt'), 'utf8'), 'second@usa.com\n');
+  assert.equal(fs.readFileSync(path.join(root, 'unknown.txt'), 'utf8'), 'invalid@example.com\n');
+  assert.equal(await evaluate('document.getElementById("export-results").disabled'), false);
+  await click('export-results');
+  await waitFor('document.getElementById("message").textContent.includes("Đã xuất kết quả")');
+  assert.equal(fs.readFileSync(path.join(root, 'emails.txt'), 'utf8'), 'invalid@example.com\n');
+  assert(!fs.readdirSync(root).some(name => /^\d{4}-/.test(name)));
   assert.deepEqual(errors, []);
   win.setSize(1160, 1020);
   await new Promise(resolve => setTimeout(resolve, 150));

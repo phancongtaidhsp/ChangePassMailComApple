@@ -4,16 +4,16 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
-    name: 'Proton Email Checker',
-    executableName: 'proton-email-checker',
-    appBundleId: 'com.taipc.proton-email-checker',
+    name: 'Mail.com Email Checker',
+    executableName: 'mailcom-email-checker',
+    appBundleId: 'com.taipc.mailcom-email-checker',
     ignore: [/^\/test(?:\/|$)/, /^\/test\.js$/, /^\/data(?:\/|$)/, /^\/results(?:\/|$)/],
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: { name: 'proton_email_checker' },
+      config: { name: 'mailcom_email_checker' },
     },
     {
       name: '@electron-forge/maker-zip',

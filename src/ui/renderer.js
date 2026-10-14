@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const api = window.protonAPI;
+const api = window.mailcomAPI;
 let current = { state: 'ready', elapsedMs: 0 };
 let tickAt = Date.now();
 let requesting = false;
@@ -27,6 +27,7 @@ function update(snapshot) {
   $('resume').hidden = !paused;
   $('resume').disabled = busy;
   $('open-results').disabled = !snapshot.outputDir;
+  $('export-results').disabled = !['paused', 'completed', 'error'].includes(snapshot.state) || !snapshot.completed;
   $('status').textContent = ({ ready: 'Sẵn sàng', running: 'Đang kiểm tra', pausing: 'Đang tạm dừng', paused: 'Đã tạm dừng', completed: 'Hoàn tất', error: 'Có lỗi' })[snapshot.state];
   $('completed').replaceChildren(document.createTextNode(`${snapshot.completed || 0} `));
   const total = document.createElement('small'); total.textContent = `/ ${snapshot.total || 0}`; $('completed').append(total);
@@ -76,6 +77,19 @@ $('start').addEventListener('click', async () => {
 $('pause').addEventListener('click', () => call(api.pause()).catch(showError));
 $('resume').addEventListener('click', () => call(api.resume()).catch(showError));
 $('open-results').addEventListener('click', () => call(api.openResults()).catch(showError));
+$('export-results').addEventListener('click', async () => {
+  if (requesting) return;
+  requesting = true;
+  $('export-results').disabled = true;
+  try {
+    const result = await call(api.exportResults());
+    $('emailFile').value = result.emailFile;
+  } catch (error) { showError(error); }
+  finally {
+    requesting = false;
+    $('export-results').disabled = !['paused', 'completed', 'error'].includes(current.state) || !current.completed;
+  }
+});
 api.onUpdate(update);
 call(api.config()).then(config => { $('outputRoot').value = config.outputRoot; if (config.snapshot) update(config.snapshot); }).catch(showError);
 setInterval(renderTime, 1000);

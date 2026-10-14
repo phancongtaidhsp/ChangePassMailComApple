@@ -3,19 +3,19 @@ const path = require('node:path');
 const { Batch } = require('./batch');
 
 if (require('electron-squirrel-startup')) app.quit();
-app.setName('Proton Email Checker');
+app.setName('Mail.com Email Checker');
 let win;
 let batch;
 let activeRun;
 let closing = false;
 let quitting = false;
-const outputRoot = () => path.join(app.getPath('documents'), 'ProtonEmailChecker', 'results');
+const outputRoot = () => path.join(app.getPath('documents'), 'MailComEmailChecker', 'results');
 const busy = () => !!activeRun;
 
 function createWindow() {
   win = new BrowserWindow({
     width: 1160, height: 840, minWidth: 860, minHeight: 680,
-    title: 'Proton Email Checker', backgroundColor: '#f6f5fb',
+    title: 'Mail.com Email Checker', backgroundColor: '#f6f5fb',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false, contextIsolation: true, sandbox: true,
@@ -58,7 +58,7 @@ handle('file:choose', async kind => {
   if (!['email', 'proxy', 'output'].includes(kind)) throw new Error('Loại file không hợp lệ.');
   const result = await dialog.showOpenDialog(win, kind === 'output'
     ? { title: 'Chọn thư mục lưu kết quả', properties: ['openDirectory', 'createDirectory'] }
-    : { title: kind === 'email' ? 'Chọn danh sách email Proton' : 'Chọn danh sách proxy (tùy chọn)', properties: ['openFile'], filters: [{ name: 'Danh sách văn bản', extensions: ['txt'] }] });
+    : { title: kind === 'email' ? 'Chọn danh sách email mail.com' : 'Chọn danh sách proxy (tùy chọn)', properties: ['openFile'], filters: [{ name: 'Danh sách văn bản', extensions: ['txt'] }] });
   return result.canceled ? null : result.filePaths[0];
 });
 handle('batch:start', options => {
@@ -82,6 +82,11 @@ handle('results:open', async () => {
   if (!batch) throw new Error('Chưa có kết quả.');
   const error = await shell.openPath(batch.outputDir);
   if (error) throw new Error(error);
+});
+handle('results:export', () => {
+  if (busy()) throw new Error('Chờ lượt đang chạy hoàn tất hoặc tạm dừng.');
+  if (!batch) throw new Error('Chưa có kết quả.');
+  return batch.exportResults();
 });
 
 app.whenReady().then(createWindow);

@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const ProtonMail = require('./services/protonmail');
+const { randomUUID } = require('node:crypto');
+const MailCom = require('./services/mailcom');
 const { normalizeProxyUrl } = require('./services/proxy');
 
 function readList(filename) {
@@ -17,20 +18,30 @@ function loadEmails(filename) {
   return { emails, duplicates: lines.length - emails.length };
 }
 
-function atomicWrite(filename, content) {
-  const temporary = `${filename}.tmp.txt`;
+function appendEmail(filename, email) {
+  const fd = fs.openSync(filename, 'a+');
   try {
-    fs.writeFileSync(temporary, content, 'utf8');
-    fs.renameSync(temporary, filename);
+    const size = fs.fstatSync(fd).size;
+    const last = Buffer.alloc(1);
+    if (size) fs.readSync(fd, last, 0, 1, size - 1);
+    const separator = size && last[0] !== 10 ? '\n' : '';
+    fs.appendFileSync(fd, `${separator}${email}\n`);
   } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    fs.closeSync(fd);
   }
 }
 
-const textField = value => String(value ?? '').replace(/[\r\n|]/g, ' ');
+const OUTPUT_FILES = { available: 'die.txt', unavailable: 'live.txt', unknown: 'unknown.txt' };
+
+function nextEmailDelay(result, defaultDelayMs, now = Date.now()) {
+  if (result.httpStatus !== 429) return defaultDelayMs;
+  const header = String(result.retryAfter ?? '').trim();
+  const retryMs = /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - now;
+  return Math.min(2147483647, Math.max(defaultDelayMs, Number.isFinite(retryMs) ? retryMs : 30000));
+}
 
 class Batch {
-  constructor(options, { createChecker = proxy => new ProtonMail(proxy), onUpdate = () => {} } = {}) {
+  constructor(options, { createChecker = proxy => new MailCom(proxy), onUpdate = () => {} } = {}) {
     const { emails, duplicates } = loadEmails(options.emailFile);
     const concurrency = Number(options.concurrency ?? 1);
     const delayMs = Number(options.delayMs ?? 1500);
@@ -38,6 +49,7 @@ class Batch {
     if (!Number.isFinite(delayMs) || delayMs < 1000 || delayMs > 60000) throw new Error('Khoảng nghỉ phải từ 1.000 đến 60.000 ms.');
     this.proxies = options.proxyFile ? readList(options.proxyFile).map(normalizeProxyUrl) : [];
     this.emails = emails;
+    this.emailFile = fs.realpathSync(options.emailFile);
     this.duplicates = duplicates;
     this.concurrency = concurrency;
     this.delayMs = delayMs;
@@ -50,9 +62,16 @@ class Batch {
     this.waiters = new Set();
     this.counts = { available: 0, unavailable: 0, unknown: 0 };
     fs.mkdirSync(options.outputRoot, { recursive: true });
-    this.outputDir = fs.mkdtempSync(path.join(options.outputRoot, `${new Date().toISOString().replace(/[:.]/g, '-')}-`));
-    fs.writeFileSync(path.join(this.outputDir, 'results.txt'), '');
-    this.exportFiles();
+    this.outputDir = path.resolve(options.outputRoot);
+    const inputs = [options.emailFile, options.proxyFile].filter(Boolean).map(file => fs.realpathSync(file));
+    for (const name of Object.values(OUTPUT_FILES)) {
+      const target = path.join(this.outputDir, name);
+      const resolved = fs.existsSync(target) ? fs.realpathSync(target) : target;
+      if (inputs.includes(resolved)) throw new Error('File kết quả trùng file đầu vào. Hãy chọn thư mục kết quả khác.');
+    }
+    for (const name of Object.values(OUTPUT_FILES)) {
+      fs.appendFileSync(path.join(this.outputDir, name), '');
+    }
   }
 
   snapshot() {
@@ -60,11 +79,44 @@ class Batch {
       state: this.state, message: this.message, total: this.emails.length,
       completed: this.results.size, duplicates: this.duplicates, ...this.counts,
       elapsedMs: this.elapsedMs + (this.startedAt ? Date.now() - this.startedAt : 0),
-      outputDir: this.outputDir,
+      outputDir: this.outputDir, emailFile: this.emailFile,
     };
   }
 
   emit(result) { this.onUpdate({ ...this.snapshot(), result }); }
+
+  exportResults() {
+    if (!['paused', 'completed', 'error'].includes(this.state)) {
+      throw new Error('Hãy tạm dừng hoặc chờ kiểm tra hoàn tất trước khi xuất kết quả.');
+    }
+    // Chỉ loại kết quả của lượt này đã ghi thành công vào file live/die.
+    const resolved = new Set([...this.results.values()]
+      .filter(result => ['available', 'unavailable'].includes(result.availability))
+      .map(result => result.email));
+    const original = fs.readFileSync(this.emailFile, 'utf8');
+    const bom = original.startsWith('\uFEFF') ? '\uFEFF' : '';
+    const lines = original.slice(bom.length).match(/[^\r\n]*(?:\r\n|\n|\r|$)/g) || [];
+    let removed = 0;
+    const kept = lines.filter(line => {
+      const email = line.trim().split('|')[0].trim().toLowerCase();
+      if (email && resolved.has(email)) { removed++; return false; }
+      return true;
+    });
+    const content = bom + kept.join('');
+    if (removed) {
+      const temporary = `${this.emailFile}.${randomUUID()}.tmp`;
+      try {
+        fs.writeFileSync(temporary, content, { flag: 'wx', mode: fs.statSync(this.emailFile).mode & 0o777 });
+        fs.renameSync(temporary, this.emailFile);
+      } finally {
+        if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+      }
+    }
+    const remaining = kept.filter(line => line.trim()).length;
+    this.message = `Đã xuất kết quả: xóa ${removed} dòng live/die khỏi file đầu vào, còn ${remaining} dòng. Bấm “Lượt kiểm tra mới” để kiểm tra lại phần còn lại.`;
+    this.emit();
+    return { removed, remaining, emailFile: this.emailFile };
+  }
 
   pause(message = 'Đang chờ các yêu cầu đang chạy hoàn tất…') {
     if (this.state !== 'running') return;
@@ -74,31 +126,12 @@ class Batch {
     this.emit();
   }
 
-  wait() {
+  wait(delayMs = this.delayMs) {
     return new Promise(resolve => {
       const wake = () => { clearTimeout(timer); this.waiters.delete(wake); resolve(); };
-      const timer = setTimeout(wake, this.delayMs);
+      const timer = setTimeout(wake, delayMs);
       this.waiters.add(wake);
     });
-  }
-
-  exportFiles() {
-    const groups = { available: [], unavailable: [], unknown: [] };
-    for (const email of this.emails) {
-      const result = this.results.get(email);
-      if (result) groups[result.availability].push(email);
-    }
-    const writeLines = (name, lines) => atomicWrite(path.join(this.outputDir, name), lines.length ? `${lines.join('\n')}\n` : '');
-    for (const [name, emails] of Object.entries(groups)) writeLines(`${name}.txt`, emails);
-    writeLines('pending.txt', this.emails.filter(email => !this.results.has(email)));
-    const snapshot = this.snapshot();
-    writeLines('summary.txt', [
-      `Trạng thái: ${snapshot.state}`, `Thông báo: ${textField(snapshot.message)}`,
-      `Tổng email: ${snapshot.total}`, `Đã kiểm tra: ${snapshot.completed}`,
-      `Còn đăng ký được: ${snapshot.available}`, `Không khả dụng: ${snapshot.unavailable}`,
-      `Chưa xác định: ${snapshot.unknown}`, `Chưa kiểm tra: ${snapshot.total - snapshot.completed}`,
-      `Email trùng bỏ qua: ${snapshot.duplicates}`, `Thời gian (ms): ${snapshot.elapsedMs}`,
-    ]);
   }
 
   async run() {
@@ -121,19 +154,13 @@ class Batch {
           const availability = result.status === 'success' && ['available', 'unavailable'].includes(result.availability)
             ? result.availability : 'unknown';
           const record = { ...result, email, availability, checkedAt: new Date().toISOString() };
-          // Nhật ký văn bản: chỉ tăng bộ đếm khi đã ghi thành công.
-          const detail = [email, availability, record.message, record.httpStatus, record.code,
-            record.errorCode, record.retries ?? 0, record.checkedAt].map(textField).join('|');
-          fs.appendFileSync(path.join(this.outputDir, 'results.txt'), `${detail}\n`);
+          // Lưu ngay từng email; chỉ tăng bộ đếm khi ghi thành công.
+          appendEmail(path.join(this.outputDir, OUTPUT_FILES[availability]), email);
           this.results.set(email, record);
           this.counts[availability]++;
-          if (result.httpStatus === 429 || result.verificationRequired || result.code === 5003) {
-            this.pause(result.httpStatus === 429
-              ? `Proton giới hạn yêu cầu. Đã tạm dừng${result.retryAfter ? `; Retry-After: ${result.retryAfter}` : ''}.`
-              : result.message);
-          }
           this.emit(record);
-          if (this.state === 'running' && next < pending.length) await this.wait();
+          // Lỗi một email không dừng hàng đợi. Luồng nhận email tiếp theo sau khoảng nghỉ.
+          if (this.state === 'running' && next < pending.length) await this.wait(nextEmailDelay(result, this.delayMs));
         }
       } catch (error) {
         failure = error;
@@ -147,11 +174,9 @@ class Batch {
     if (failure) this.message = `Lỗi xử lý/lưu kết quả: ${failure.message}`;
     else if (this.state === 'completed') this.message = 'Đã kiểm tra hết danh sách.';
     else if (this.message === 'Đang chờ các yêu cầu đang chạy hoàn tất…') this.message = 'Đã tạm dừng. Có thể tiếp tục lượt này.';
-    try { this.exportFiles(); }
-    catch (error) { this.state = 'error'; this.message = `Không thể xuất file: ${error.message}. Kết quả đã ghi nằm trong results.txt.`; }
     this.emit();
     return this.snapshot();
   }
 }
 
-module.exports = { Batch, loadEmails };
+module.exports = { Batch, loadEmails, nextEmailDelay };

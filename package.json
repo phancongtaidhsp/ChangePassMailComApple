@@ -1,11 +1,11 @@
 {
-  "name": "proton-email-checker",
+  "name": "mailcom-email-checker",
   "version": "1.0.0",
-  "description": "Kiểm tra khả năng đăng ký email Proton và lưu kết quả theo từng lượt.",
+  "description": "Kiểm tra khả năng đăng ký email mail.com và lưu kết quả theo từng lượt.",
   "main": "src/main.js",
   "scripts": {
     "start": "electron-forge start",
-    "test": "node test/protonmail.test.js && node test/batch.test.js",
+    "test": "node test/mailcom.test.js && node test/batch.test.js",
     "test:ui": "electron test/electron-smoke.js",
     "check:email": "node test.js",
     "package": "electron-forge package",
@@ -29,5 +29,5 @@
     "https-proxy-agent": "^5.0.1",
     "electron-squirrel-startup": "^1.0.0"
   },
-  "productName": "Proton Email Checker"
+  "productName": "Mail.com Email Checker"
 }

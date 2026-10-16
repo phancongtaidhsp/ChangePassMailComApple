@@ -1,20 +1,22 @@
 {
-  "name": "mailcom-email-checker",
+  "name": "mailcom-alias-manager",
   "version": "1.0.0",
-  "description": "Kiểm tra khả năng đăng ký email mail.com và lưu kết quả theo từng lượt.",
+  "description": "Thêm alias mail.com, nhận link Apple, đổi mật khẩu và dọn dẹp alias.",
   "main": "src/main.js",
   "scripts": {
     "start": "electron-forge start",
-    "test": "node test/mailcom.test.js && node test/batch.test.js",
+    "test": "node test/alias-api.test.js && node test/request-retry.test.js && node test/nonstop-batch.test.js && node test/alias-batch.test.js && node test/apple-verification-link.test.js && node test/mailcom-inbox.test.js && node test/inbox-batch.test.js && node test/password-change.test.js && node test/result-export.test.js",
+    "test:inbox:live": "node test/live-inbox.js",
+    "test:alias:add:live": "node test/live-alias.js --create",
+    "test:alias:delete:live": "node test/live-alias.js --delete",
     "test:ui": "electron test/electron-smoke.js",
-    "check:email": "node test.js",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "make": "electron-forge make",
+    "test:proxy": "node test/alias-proxy.test.js"
   },
   "author": "TaiPC",
   "license": "ISC",
   "devDependencies": {
-    "@electron/fuses": "^1.7.0",
     "@electron-forge/cli": "^7.3.0",
     "@electron-forge/maker-deb": "^7.3.0",
     "@electron-forge/maker-rpm": "^7.3.0",
@@ -22,12 +24,16 @@
     "@electron-forge/maker-zip": "^7.3.0",
     "@electron-forge/plugin-auto-unpack-natives": "^7.3.0",
     "@electron-forge/plugin-fuses": "^7.3.0",
+    "@electron/fuses": "^1.7.0",
     "electron": "^29.1.1"
   },
   "dependencies": {
     "axios": "^1.6.7",
+    "axios-https-proxy-fix": "^0.17.1",
+    "cheerio": "^1.2.0",
+    "electron-squirrel-startup": "^1.0.0",
     "https-proxy-agent": "^5.0.1",
-    "electron-squirrel-startup": "^1.0.0"
+    "tough-cookie": "^4.1.4"
   },
-  "productName": "Mail.com Email Checker"
+  "productName": "Mail.com Alias Manager"
 }

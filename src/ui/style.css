@@ -44,6 +44,7 @@ button:disabled { opacity: .45; cursor: default; }
 .stat p { color: #91869e; font-size: 11px; margin: 7px 0 0; }
 .purple strong { color: #7951c6; }.green strong { color: #2b957b; }.amber strong { color: #b38b29; }
 .results .section-heading { margin-bottom: 12px; }
+.results .section-heading, .results .actions { flex-wrap: wrap; }
 progress { display: block; width: 100%; height: 5px; border: 0; border-radius: 9px; overflow: hidden; appearance: none; }
 progress::-webkit-progress-bar { background: #eee9f6; }progress::-webkit-progress-value { background: #8b64dd; }
 #message { color: #81748c; font-size: 12px; margin: 12px 0 17px; overflow-wrap: anywhere; }
@@ -51,13 +52,16 @@ progress::-webkit-progress-bar { background: #eee9f6; }progress::-webkit-progres
 .table-wrap { max-height: 290px; overflow: auto; }
 table { width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed; }
 th { position: sticky; top: 0; background: #faf9fc; padding: 11px 13px; color: #95899f; font-size: 11px; font-weight: 500; }
-th:first-child { width: 34%; }th:nth-child(2) { width: 21%; }
+th:first-child { width: 25%; }th:nth-child(2) { width: 22%; }th:nth-child(3) { width: 19%; }
 td { padding: 12px 13px; border-bottom: 1px solid #f2eef7; font-size: 12px; overflow-wrap: anywhere; }
 td:last-child { color: #94879c; font-size: 11px; line-height: 1.5; }
 .badge { display: inline-block; padding: 5px 8px; border-radius: 5px; font-size: 11px; }
-.badge.available { color: #237d65; background: #eaf7f2; }.badge.unavailable { color: #7852ad; background: #f1ecfa; }.badge.unknown { color: #9b782a; background: #faf3e1; }
+.badge.added { color: #237d65; background: #eaf7f2; }.badge.existing { color: #7852ad; background: #f1ecfa; }.badge.failed { color: #9b782a; background: #faf3e1; }
+.badge.success { color: #237d65; background: #eaf7f2; }.badge.pending { color: #6540ac; background: #f1ecfa; }.badge.failure { color: #a43f24; background: #fff0e9; }
 td.empty { text-align: center; padding: 32px; color: #aba2b4; }
 .table-footer, footer { font-size: 10px; color: #a095ab; padding-top: 15px; gap: 12px; }
 footer { padding: 17px 2px 0; flex-wrap: wrap; }
 [hidden] { display: none !important; }
 @media (max-width: 900px) { main { padding: 23px; } .controls { gap: 13px; }.field { grid-template-columns: 125px 1fr; }.stat { padding: 15px; } }
+
+.badge.attention { color: #a43f24; background: #fff0e9; }

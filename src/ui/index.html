@@ -4,41 +4,49 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
-  <title>Mail.com Email Checker</title>
+  <title>Mail.com Alias Password Tool</title>
   <link rel="stylesheet" href="style.css">
   <script src="renderer.js" defer></script>
 </head>
 <body>
   <main>
     <header>
-      <div class="brand"><div class="logo" aria-hidden="true">M<span>✓</span></div><div><p class="eyebrow">EMAIL WORKSPACE</p><h1>Mail.com Email Checker</h1></div></div>
+      <div class="brand"><div class="logo" aria-hidden="true">M<span>✓</span></div><div><p class="eyebrow">EMAIL WORKSPACE</p><h1>Đổi mật khẩu Mail.com Alias</h1></div></div>
       <span class="status" id="status">Sẵn sàng</span>
     </header>
-    <p class="intro">Kiểm tra danh sách email mail.com, theo dõi tiến độ và tự lưu kết quả.</p>
-    <div class="notice"><strong>Đọc kết quả đúng cách</strong><p>API đăng ký chỉ cho biết tên còn khả dụng hay không. Tên đã dùng hoặc bị giữ lại chưa chứng minh hộp thư đang hoạt động (live). Công cụ không xác nhận khả năng nhận thư.</p></div>
+    <p class="intro">Thêm alias, nhận link Apple trong Inbox và đổi mật khẩu cho từng alias qua link nhận được.</p>
+    <p class="muted">Gửi thư đang ở chế độ giả lập: sau khi thêm alias thành công, chờ 0,5 giây rồi báo gửi thành công, không gửi thư thật. Đăng nhập và thêm alias vẫn chạy thật qua proxy.</p>
+    <div class="notice"><strong>Mỗi luồng giữ một mail chính, xử lý nhiều alias</strong><p>Đăng nhập một lần, xử lý tuần tự alias trong cùng phiên cho đến khi mail.com báo “Maximum number of email addresses created”, rồi chuyển sang mail chính tiếp theo. Alias được cấp duy nhất từ hàng đợi chung, không chạy trùng giữa các luồng. Tạm dừng và Tiếp tục giữ nguyên alias đang chờ của từng mail chính.</p></div>
     <section class="panel" aria-labelledby="setup-title">
-      <div class="section-heading"><h2 id="setup-title">Danh sách & cấu hình</h2><span>TXT · Một email mỗi dòng</span></div>
-      <div class="field"><label for="emailFile">Danh sách email</label><div class="file-row"><input id="emailFile" readonly placeholder="Chọn file email mail.com cần kiểm tra"><button id="choose-email" class="secondary">Chọn file</button></div></div>
-      <div class="field"><label for="proxyFile">Proxy <span class="muted">/ tùy chọn</span></label><div class="file-row"><input id="proxyFile" readonly placeholder="Để trống để kết nối trực tiếp"><button id="choose-proxy" class="secondary">Chọn file</button><button id="clear-proxy" class="text-button" aria-label="Bỏ file proxy">Bỏ</button></div></div>
-      <div class="field"><label for="outputRoot">Thư mục kết quả</label><div class="file-row"><input id="outputRoot" readonly placeholder="Documents/MailComEmailChecker/results"><button id="choose-output" class="secondary">Thay đổi</button></div></div>
-      <p class="muted">Lưu trực tiếp live.txt, die.txt và unknown.txt. Mỗi lượt ghi nối tiếp vào ba file, giữ nguyên kết quả cũ.</p>
-      <div class="controls"><div class="settings"><label for="concurrency">Số luồng <input id="concurrency" type="number" min="1" max="200" value="1"></label><label for="delayMs">Nghỉ mỗi luồng (ms) <input id="delayMs" type="number" min="1000" max="60000" step="500" value="1500"></label></div><div class="actions"><button id="pause" class="secondary" disabled>Tạm dừng</button><button id="resume" class="secondary" hidden>Tiếp tục</button><button id="start" class="primary">Bắt đầu kiểm tra</button></div></div>
+      <div class="section-heading"><h2 id="setup-title">Danh sách & cấu hình</h2><span>TXT · Mail chính + mail phụ</span></div>
+      <div class="field"><label for="emailFile">Mail chính</label><div class="file-row"><input id="emailFile" readonly placeholder="credentials.mailchinh.txt · email|password"><button id="choose-email" class="secondary">Chọn file</button></div></div>
+      <div class="field"><label for="aliasFile">Mail phụ cần thêm</label><div class="file-row"><input id="aliasFile" readonly placeholder="mailphu.txt · một địa chỉ đầy đủ mỗi dòng"><button id="choose-alias" class="secondary">Chọn file</button></div></div>
+      <div class="field"><label for="proxyFile">Proxy (bắt buộc)</label><div class="file-row"><input id="proxyFile" readonly placeholder="proxy.txt · host:port hoặc host:port:user:password"><button id="choose-proxy" class="secondary">Chọn file</button></div></div>
+      <p class="muted">Mọi request mail.com đi qua proxy. Mail chính đăng nhập lỗi được ghi vào mailchinhfail.txt và thay bằng tài khoản khác. Các lỗi sau đăng nhập ghi fail.txt rồi chạy alias tiếp theo, không tự dừng luồng.</p>
+      <p class="muted">Nếu lần gửi đầu chưa có link, tool gửi lại một lần rồi quét Inbox lần hai. Sau khi thêm alias thành công, mọi nhánh kết thúc đều thử xóa alias. Xóa thất bại được ghi cùng kết quả và luồng tiếp tục alias khác.</p>
+      <div class="field"><label for="outputRoot">Thư mục kết quả</label><div class="file-row"><input id="outputRoot" readonly placeholder="Documents/MailComAliasManager/results"><button id="choose-output" class="secondary">Thay đổi</button></div></div>
+      <p class="muted">success.txt ghi mail chính|alias|mật khẩu mới. fail.txt ghi mail chính|alias|mã lỗi (ví dụ unable_add_alias). mailchinhfail.txt ghi mail chính|mã lỗi. Bảng và JSONL giữ mô tả lỗi chi tiết.</p>
+      <div class="controls"><div class="settings"><label for="concurrency">Số luồng <input id="concurrency" type="number" min="1" max="200" value="1"></label><label for="delayMs">Nghỉ mỗi luồng (ms) <input id="delayMs" type="number" min="1000" max="60000" step="500" value="1500"></label></div><div class="actions"><button id="pause" class="secondary" disabled>Tạm dừng</button><button id="resume" class="secondary" hidden>Tiếp tục</button><button id="start" class="primary">Bắt đầu đổi pass alias</button></div></div>
     </section>
     <section class="stats" aria-label="Thống kê">
-      <div class="stat"><span>Đã kiểm tra</span><strong id="completed">0 <small>/ 0</small></strong><p id="elapsed">00:00</p></div>
-      <div class="stat purple"><span>Không khả dụng</span><strong id="unavailable">0</strong><p>live.txt · Tên đã dùng / bị giữ lại</p></div>
-      <div class="stat green"><span>Còn đăng ký được</span><strong id="available">0</strong><p>die.txt · Tên khả dụng theo API</p></div>
-      <div class="stat amber"><span>Chưa xác định</span><strong id="unknown">0</strong><p>unknown.txt · Lỗi / giới hạn / xác minh</p></div>
+      <div class="stat green"><span>Đổi pass thành công</span><strong id="passwordChanged">0</strong><p id="elapsed">00:00</p></div>
+      <div class="stat purple"><span>Đã nhận link Apple</span><strong id="linksFound">0</strong><p>Link hợp lệ trong Inbox alias</p></div>
+      <div class="stat"><span>Đang xử lý</span><strong id="inProgress">0</strong><p>Chờ nhận link hoặc đổi pass</p></div>
+      <div class="stat amber"><span>Không hoàn tất</span><strong id="passwordFailed">0</strong><p>Đã ghi nguyên nhân vào fail.txt</p></div>
     </section>
     <section class="panel results" aria-labelledby="results-title">
-      <div class="section-heading"><h2 id="results-title">Kết quả kiểm tra</h2><div class="actions"><button id="export-results" class="primary" disabled>Xuất kết quả</button><button id="open-results" class="secondary" disabled>Mở thư mục kết quả ↗</button></div></div>
-      <p class="muted">Xuất kết quả sẽ xóa các dòng đã có kết quả live/die trong lượt này khỏi file đầu vào, giữ lại unknown và chưa kiểm tra. Sau đó bấm “Lượt kiểm tra mới” để chạy phần còn lại.</p>
+      <div class="section-heading"><h2 id="results-title">Kết quả xử lý</h2><div class="actions"><button id="retry-writes" class="secondary" disabled>Thử ghi lại</button><button id="open-results" class="secondary" disabled>Mở thư mục kết quả ↗</button><button id="export-results" class="primary" disabled>Xuất kết quả</button></div></div>
+      <p class="muted">Sau khi hoàn tất, bấm Xuất kết quả để xóa alias đổi pass thành công hoặc không thêm được khỏi file mail phụ, và mail chính đăng nhập lỗi khỏi file mail chính của lượt chạy. Các dòng còn lại được giữ.</p>
+      <p id="input-export-status" role="status" class="muted" hidden></p>
+      <p class="muted">Sau mỗi lần gửi, Inbox được quét tối đa 5 lượt, cách nhau 2 giây. Không có link thì gửi lần hai; có link thì đổi pass, sau đó xóa alias khỏi mail chính trước khi hoàn tất.</p>
+      <p class="muted">Mail chính đăng nhập lỗi: <strong id="main-failures">0</strong> · Alias chưa xác nhận: <strong id="attention">0</strong>. Xem trạng thái cuối và mật khẩu mới (nếu thành công) trong bảng.</p>
+      <p id="write-status" role="status" class="muted" hidden></p>
       <progress id="progress" value="0" max="1" aria-label="Tiến độ"></progress>
-      <p id="message" role="status" aria-live="polite">Chọn danh sách email để bắt đầu. Dòng trống và email trùng sẽ được bỏ qua.</p>
-      <div class="table-wrap"><table><thead><tr><th>Email</th><th>Kết quả</th><th>Chi tiết</th></tr></thead><tbody id="rows"><tr id="empty"><td colspan="3" class="empty">Kết quả mới nhất sẽ xuất hiện tại đây.</td></tr></tbody></table></div>
+      <p id="message" role="status" aria-live="polite">Chọn file mail chính, mail phụ và proxy để bắt đầu. Mail phụ trùng được bỏ qua.</p>
+      <div class="table-wrap"><table><thead><tr><th>Mail chính</th><th>Alias</th><th>Kết quả đổi pass</th><th>Mật khẩu mới / lỗi</th></tr></thead><tbody id="rows"><tr id="empty"><td colspan="4" class="empty">Kết quả đổi mật khẩu mới nhất sẽ xuất hiện tại đây.</td></tr></tbody></table></div>
       <div class="table-footer"><span>Hiển thị tối đa 100 kết quả mới nhất</span><span id="duplicates">0 email trùng được bỏ qua</span></div>
     </section>
-    <footer><span>Hỗ trợ mail.com · email.com · usa.com và các tên miền trên trang đăng ký</span><span>Kết quả tự lưu · Xuất kết quả để lọc file đầu vào</span></footer>
+    <footer><span>Thêm alias → nhận link → đổi pass → xóa alias</span><span>Kết quả tự lưu · Lọc đầu vào khi bấm Xuất kết quả</span></footer>
   </main>
 </body>
 </html>

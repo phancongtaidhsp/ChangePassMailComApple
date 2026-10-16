@@ -4,16 +4,16 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
-    name: 'Mail.com Email Checker',
-    executableName: 'mailcom-email-checker',
-    appBundleId: 'com.taipc.mailcom-email-checker',
-    ignore: [/^\/test(?:\/|$)/, /^\/test\.js$/, /^\/data(?:\/|$)/, /^\/results(?:\/|$)/],
+    name: 'Mail.com Alias Manager',
+    executableName: 'mailcom-alias-manager',
+    appBundleId: 'com.taipc.mailcom-alias-manager',
+    ignore: [/^\/test(?:\/|$)/, /^\/data(?:\/|$)/, /^\/results(?:\/|$)/],
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: { name: 'mailcom_email_checker' },
+      config: { name: 'mailcom_alias_manager' },
     },
     {
       name: '@electron-forge/maker-zip',

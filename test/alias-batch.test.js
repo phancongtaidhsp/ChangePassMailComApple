@@ -45,14 +45,14 @@ async function run() {
     assert(!JSON.stringify(attempts).includes('private detail'));
     assert.equal(pending.state, 'completed'); assert.equal(pending.snapshot().attention, 0);
     assert.equal(pending.latest.size, 2); assert.equal(pending.results.size, 2);
-    // Two independent sessions handle several aliases each without logging in again.
+    // Requested workers are capped at the number of available main accounts.
     const mains = Array.from({ length: 6 }, (_, i) => `main${i}@mail.com|password`);
     const aliases = Array.from({ length: 6 }, (_, i) => `alias${i}@mail.com`);
     fs.writeFileSync(options.emailFile, mains.join('\n'));
     fs.writeFileSync(options.aliasFile, aliases.join('\n'));
     let active = 0, peak = 0, closed = 0;
     const pairs = [];
-    const parallel = new AliasBatch({ ...options, concurrency: 2 }, { createClient: () => {
+    const parallel = new AliasBatch({ ...options, concurrency: 50 }, { createClient: () => {
       let main;
       return { login: async account => { main = account.email; peak = Math.max(peak, ++active); },
         addAlias: async alias => { pairs.push([main, alias]);
@@ -60,9 +60,9 @@ async function run() {
         removeAlias: async () => ({ status: 'removed' }), cancel() {}, close: async () => { active--; closed++; } };
     } });
     await parallel.run();
-    assert.equal(parallel.state, 'completed'); assert.equal(peak, 2); assert.equal(active, 0); assert.equal(closed, 2);
+    assert.equal(parallel.state, 'completed'); assert.equal(peak, 6); assert.equal(active, 0); assert.equal(closed, 6);
     assert.deepEqual(pairs.map(([, alias]) => alias), aliases);
-    assert.equal(new Set(pairs.map(([main]) => main)).size, 2);
+    assert.equal(new Set(pairs.map(([main]) => main)).size, 6);
     // 10 workers: one account/session per worker, sequential followups within
     // that session, rollover only on quota, no alias dispatched a second time.
     const manyMains = Array.from({ length: 12 }, (_, i) => `main${i}@mail.com|password`);

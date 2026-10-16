@@ -47,7 +47,10 @@ async function run() {
     }
     throw new Error(`Timed out: ${source}`);
   };
-  await waitFor('!!document.getElementById("outputRoot").value');
+  await evaluate('window.mailcomAPI.config()');
+  for (const id of ['emailFile', 'aliasFile', 'proxyFile', 'outputRoot']) {
+    assert.equal(await evaluate(`document.getElementById(${JSON.stringify(id)}).value`), '');
+  }
   assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
   await click('choose-email');
   await click('choose-alias');
@@ -57,9 +60,11 @@ async function run() {
   await click('choose-proxy');
   assert.equal(await evaluate('document.getElementById("newPassword")'), null);
   await waitFor(`document.getElementById("outputRoot").value === ${JSON.stringify(root)}`);
-  assert.equal(await evaluate('document.getElementById("concurrency").value'), '1');
+  assert.equal(await evaluate('document.getElementById("concurrency").value'), '50');
+  assert.equal(await evaluate('document.getElementById("delayMs").value'), '1000');
   await click('start');
   await waitFor('document.getElementById("inProgress").textContent === "1"');
+  assert.equal(await evaluate('document.getElementById("concurrency").value'), '2');
   assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
   await click('pause');
   await waitFor('document.getElementById("status").textContent === "Đã tạm dừng"');

@@ -14,7 +14,7 @@ npm start
    Mọi ký tự sau dấu `|` đầu tiên thuộc mật khẩu, kể cả khoảng trắng.
 2. Chọn `data/mailphu.txt`, mỗi dòng một địa chỉ đầy đủ, ví dụ `tenphu@mail.com`.
 3. Chọn file `data/proxy.txt` (bắt buộc), mỗi dòng một proxy HTTP/HTTPS.
-4. Đặt **Số luồng** (1–200, mặc định 1), khoảng nghỉ và thư mục kết quả. Mật khẩu mới được tự sinh khi lấy được link.
+4. Đặt **Số luồng** (1–200, mặc định 50), khoảng nghỉ (mặc định 1.000 ms) và thư mục kết quả. Khi bắt đầu, số luồng tự giảm xuống bằng số mail chính nếu file có ít tài khoản hơn; giao diện hiển thị số luồng đã điều chỉnh. Mật khẩu mới được tự sinh khi lấy được link.
 5. Bấm **Bắt đầu đổi pass alias**.
 6. Mở thư mục kết quả: `success.txt` chứa các cặp đổi pass thành công, `fail.txt` chứa lỗi theo alias, `mailchinhfail.txt` chứa mail chính đăng nhập lỗi; `alias-results.jsonl` lưu trạng thái chi tiết.
 

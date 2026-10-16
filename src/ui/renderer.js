@@ -33,6 +33,8 @@ function update(snapshot) {
   tickAt = Date.now();
   const busy = ['running', 'pausing'].includes(snapshot.state);
   const paused = snapshot.state === 'paused';
+  if (Number.isInteger(snapshot.concurrency)) $('concurrency').value = snapshot.concurrency;
+  if (Number.isFinite(snapshot.delayMs)) $('delayMs').value = snapshot.delayMs;
   for (const id of ['choose-email', 'choose-alias', 'choose-proxy', 'choose-output', 'concurrency', 'delayMs', 'start']) $(id).disabled = busy;
   $('start').disabled = busy || !!snapshot.pendingWrites;
   $('retry-writes').disabled = !snapshot.pendingWrites;
@@ -136,5 +138,5 @@ $('export-results').addEventListener('click', async () => {
   }
 });
 api.onUpdate(update);
-call(api.config()).then(config => { $('outputRoot').value = config.outputRoot; $('emailFile').value = config.emailFile || ''; $('aliasFile').value = config.aliasFile || ''; $('proxyFile').value = config.proxyFile || ''; if (config.snapshot) update(config.snapshot); }).catch(showError);
+call(api.config()).then(config => { $('outputRoot').value = config.outputRoot || ''; $('emailFile').value = config.emailFile || ''; $('aliasFile').value = config.aliasFile || ''; $('proxyFile').value = config.proxyFile || ''; if (config.snapshot) update(config.snapshot); }).catch(showError);
 setInterval(renderTime, 1000);

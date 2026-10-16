@@ -49,10 +49,11 @@ class AliasBatch {
     // Các số này phản ánh kết quả cuối của mỗi cặp mail, tách khỏi kết quả
     // kỹ thuật của bước thêm alias ở mail.com.
     this.finalCounts = { success: 0, failed: 0, linksFound: 0 };
-    this.concurrency = Number(options.concurrency ?? 1);
+    this.concurrency = Number(options.concurrency ?? 50);
     if (!Number.isInteger(this.concurrency) || this.concurrency < 1 || this.concurrency > 200) throw new Error('Số luồng phải từ 1 đến 200.');
+    this.concurrency = Math.min(this.concurrency, this.accounts.length);
     this.counts = { added: 0, existing: 0, failed: 0 };
-    this.delayMs = Number(options.delayMs ?? 1500);
+    this.delayMs = Number(options.delayMs ?? 1000);
     if (!Number.isFinite(this.delayMs) || this.delayMs < 1000 || this.delayMs > 60000) throw new Error('Khoảng nghỉ phải từ 1.000 đến 60.000 ms.');
     if (typeof options.outputRoot !== 'string' || !options.outputRoot.trim()) throw new Error('Hãy chọn thư mục kết quả.');
     this.outputDir = path.resolve(options.outputRoot);
@@ -73,6 +74,7 @@ class AliasBatch {
   snapshot() {
     return {
       state: this.state, message: this.message, total: this.jobs.length, completed: this.counts.added,
+      concurrency: this.concurrency, delayMs: this.delayMs,
       totalAccounts: this.accounts.length, fullAccounts: this.finishedAccounts.size,
       accountsNeedingAttention: this.accountErrors.size,
       loginFailed: this.loginFailed.size, pendingWrites: this.writer.pendingCount, writeError: this.writer.errorMessage,

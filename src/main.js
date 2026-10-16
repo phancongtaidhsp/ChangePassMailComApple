@@ -10,7 +10,6 @@ let batch;
 let activeRun;
 let closing = false;
 let quitting = false;
-const outputRoot = () => path.join(app.getPath('documents'), 'MailComAliasManager', 'results');
 const busy = () => !!activeRun;
 
 function createWindow() {
@@ -53,7 +52,7 @@ function handle(channel, handler) {
   });
 }
 
-handle('app:config', () => ({ outputRoot: outputRoot(), emailFile: path.join(app.getAppPath(), 'data', 'credentials.mailchinh.txt'), aliasFile: path.join(app.getAppPath(), 'data', 'mailphu.txt'), proxyFile: path.join(app.getAppPath(), 'data', 'proxy.txt'), ...(batch ? { snapshot: batch.snapshot() } : {}) }));
+handle('app:config', () => ({ outputRoot: '', emailFile: '', aliasFile: '', proxyFile: '', ...(batch ? { snapshot: batch.snapshot() } : {}) }));
 handle('file:choose', async kind => {
   if (busy()) throw new Error('Chờ lượt đang chạy hoàn tất hoặc tạm dừng.');
   if (!['email', 'alias', 'proxy', 'output'].includes(kind)) throw new Error('Loại file không hợp lệ.');

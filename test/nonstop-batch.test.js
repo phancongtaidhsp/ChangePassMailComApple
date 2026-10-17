@@ -63,7 +63,8 @@ async function run() {
     assert.equal(fs.readFileSync(batch.mainFailFile, 'utf8').trim().split('\n').length, 2);
     const fails = fs.readFileSync(batch.failFile, 'utf8');
     for (const alias of aliases.slice(0, 6)) assert(fails.includes(`|${alias}|`));
-    assert(!fails.includes('private')); assert(!fails.includes('login-secret'));
+    assert(!fails.includes('private')); assert(fails.includes('|login-secret|'));
+    assert(!fs.readFileSync(batch.resultFile, 'utf8').includes('login-secret'));
     assert(fs.readFileSync(batch.successFile, 'utf8').includes(`|${aliases[5]}|generated-secret`));
 
     // Even if every login fails, no alias is consumed and the run completes.

@@ -3,6 +3,7 @@ const path = require('node:path');
 const { loadProxies, requireProxy } = require('./services/required-proxy');
 const { ResultWriter } = require('./result-writer');
 const { exportResultsFromFiles } = require('./export-inputs');
+const MAX_SEND_ATTEMPTS = 5;
 
 function lines(file) {
   if (!file || !fs.statSync(file).isFile()) throw new Error('Hãy chọn file TXT hợp lệ.');
@@ -31,6 +32,7 @@ function loadPlan(options) {
 class AliasBatch {
   constructor(options, { createClient, sendMail, changePassword, generatePassword = require('./helper/helper').generatePassword, onUpdate = () => { }, outputIO } = {}) {
     Object.assign(this, loadPlan(options));
+    this.mainPasswords = new Map(this.accounts.map(account => [account.email, account.password]));
     // Giữ chuỗi đầu vào cho sendMail/changePassword; chỉ chuẩn hóa khi tạo client mail.com.
     this.proxies = loadProxies(options.proxyFile, { raw: true });
     this.sendMail = sendMail;
@@ -96,7 +98,7 @@ class AliasBatch {
       const key = `${record.jobId}:${file}`;
       if (!this.storageErrorsLogged.has(key)) {
         this.storageErrorsLogged.add(key);
-        this.writer.enqueue(this.failFile, `${record.mainEmail}|${record.alias || ''}|result_write_failed\n`);
+        this.writer.enqueue(this.failFile, this.failureLine(record, 'result_write_failed'));
       }
     }
     return ticket;
@@ -158,13 +160,17 @@ class AliasBatch {
     if (this.exported.has(record.jobId)) return;
     record.errorCode ||= 'alias_processing_failed';
     record.finalMessage ||= message;
-    const ticket = this.writeResult(this.failFile, `${record.mainEmail}|${record.alias}|${record.errorCode}\n`, record);
+    const ticket = this.writeResult(this.failFile, this.failureLine(record, record.errorCode), record);
     this.exportTickets.set(record, ticket);
     this.exported.add(record.jobId);
     this.finalCounts.failed++;
     record.exportStatus = 'fail';
     record.exportMessage = ticket.saved ? 'Đã ghi fail.txt.' : 'Đang chờ ghi fail.txt trong bộ nhớ.';
     this.saveFollowup(record);
+  }
+  failureLine(record, code) {
+    // Mật khẩu mail chính chỉ đưa vào fail.txt, không gắn vào record/snapshot/JSONL.
+    return `${record.mainEmail}|${this.mainPasswords.get(record.mainEmail) || ''}|${record.alias || ''}|${code}\n`;
   }
   async sendVerification(record, pending, proxy) {
     pending.sendAttempts = (pending.sendAttempts || 0) + 1;
@@ -173,7 +179,7 @@ class AliasBatch {
     let success = false, simulated = false;
     record.sendStatus = 'sending';
     record.sendAttempts = attempt;
-    record.sendMessage = `Đang gửi thư lần ${attempt}/2…`;
+    record.sendMessage = `Đang gửi thư lần ${attempt}/${MAX_SEND_ATTEMPTS}…`;
     this.emit(record);
     try {
       if (typeof this.sendMail !== 'function') {
@@ -183,11 +189,11 @@ class AliasBatch {
         success = sent === 'successfully';
         simulated = sent?.simulated === true;
         record.sendMessage = success
-          ? `Gửi thư lần ${attempt}/2 thành công${simulated ? ' (giả lập — không gửi thư thật)' : ''}.`
-          : `Gửi thư lần ${attempt}/2 thất bại.`;
+          ? `Gửi thư lần ${attempt}/${MAX_SEND_ATTEMPTS} thành công${simulated ? ' (giả lập — không gửi thư thật)' : ''}.`
+          : `Gửi thư lần ${attempt}/${MAX_SEND_ATTEMPTS} thất bại.`;
       }
     } catch {
-      record.sendMessage = `Gửi thư lần ${attempt}/2 thất bại.`;
+      record.sendMessage = `Gửi thư lần ${attempt}/${MAX_SEND_ATTEMPTS} thất bại.`;
     }
     record.sendStatus = success ? (simulated ? 'simulated' : 'sent') : 'failed';
     this.message = `${record.sendMessage} ${record.alias}`;
@@ -227,7 +233,7 @@ class AliasBatch {
     catch (error) {
       if (!success && error.code === 'CANCELLED' && !this.processing()) throw error;
       if (!success) record.finalMessage = `${message} Dọn dẹp thất bại: ${record.cleanupMessage}`;
-      this.writeResult(this.failFile, `${record.mainEmail}|${record.alias}|alias_cleanup_failed\n`, record);
+      this.writeResult(this.failFile, this.failureLine(record, 'alias_cleanup_failed'), record);
     }
     if (success) this.exportSuccess(record, this.passwords.get(record));
     else this.exportFail(record, record.finalMessage);
@@ -237,15 +243,26 @@ class AliasBatch {
   async readVerification(accountIndex, client) {
     const pending = this.pendingInbox.get(accountIndex);
     const { record, attempts } = pending;
-    while (record.inboxStatus !== 'found' && !pending.verificationExhausted && pending.sendAttempts <= 2) {
+    while (record.inboxStatus !== 'found' && !pending.verificationExhausted && pending.sendAttempts < MAX_SEND_ATTEMPTS) {
+      if (pending.sendAttempts) {
+        const reason = record.sendStatus === 'failed' ? 'Gửi thư thất bại' : 'Chưa tìm thấy link Apple';
+        record.sendStatus = 'retrying';
+        record.sendMessage = `${reason}; thử gửi lần ${pending.sendAttempts + 1}/${MAX_SEND_ATTEMPTS} sau 2 giây.`;
+        this.message = `${record.sendMessage} ${record.alias}`;
+        this.saveFollowup(record);
+        await this.wait(2000);
+      }
+      if (!this.processing()) throw Object.assign(new Error('Lượt chạy không hoạt động.'), { code: 'CANCELLED' });
+      const sent = await this.sendVerification(record, pending, this.proxies[accountIndex % this.proxies.length]);
+      if (!sent) continue;
       record.inboxStatus = 'checking';
-      record.inboxMessage = `Đang tìm thư Apple sau lần gửi ${pending.sendAttempts}/2…`;
+      record.inboxMessage = `Đang tìm thư Apple sau lần gửi ${pending.sendAttempts}/${MAX_SEND_ATTEMPTS}…`;
       this.emit(record);
       try {
         const result = await client.waitForAppleVerification({ recipient: record.alias, since: pending.since, attempts });
         record.inboxStatus = result.status;
         record.inboxMessage = result.status === 'found' ? 'Đã tìm thấy link xác minh Apple.'
-          : `Chưa có link sau lần gửi ${pending.sendAttempts}/2${result.truncated ? ' (đã đạt giới hạn 250 thư mới nhất)' : ''}.`;
+          : `Chưa có link sau lần gửi ${pending.sendAttempts}/${MAX_SEND_ATTEMPTS}${result.truncated ? ' (đã đạt giới hạn 250 thư mới nhất)' : ''}.`;
         if (result.status === 'found') {
           record.verificationLink = result.link;
           record.appleMessageId = result.messageId;
@@ -259,9 +276,6 @@ class AliasBatch {
         throw error;
       }
       this.saveFollowup(record);
-      if (record.inboxStatus === 'found' || pending.sendAttempts >= 2) break;
-      const sent = await this.sendVerification(record, pending, this.proxies[accountIndex % this.proxies.length]);
-      if (!sent) break;
     }
     if (record.inboxStatus !== 'found') pending.verificationExhausted = true;
     if (record.inboxStatus === 'found' && typeof this.changePassword === 'function') {
@@ -270,8 +284,8 @@ class AliasBatch {
     } else if (record.inboxStatus !== 'found') {
       const message = record.sendStatus === 'failed'
         ? record.sendMessage
-        : pending.sendAttempts >= 2
-        ? 'Không tìm thấy link Apple sau 2 lần gửi thư.'
+        : pending.sendAttempts >= MAX_SEND_ATTEMPTS
+        ? `Không tìm thấy link Apple sau ${MAX_SEND_ATTEMPTS} lần gọi gửi thư.`
         : record.sendMessage || record.inboxMessage;
       record.inboxMessage = message;
       await this.finishFollowup(accountIndex, client, { success: false, message, errorCode: record.sendStatus === 'failed' ? 'send_mail_failed' : 'apple_link_not_found' });
@@ -332,17 +346,8 @@ class AliasBatch {
     if (!this.processing()) throw Object.assign(new Error('Lượt chạy không hoạt động.'), { code: 'CANCELLED' });
     if (pending.completion) return this.finishFollowup(accountIndex, client);
     try {
-      if (!pending.sendAttempts) await this.sendVerification(pending.record, pending, this.proxies[accountIndex % this.proxies.length]);
-      if (['failed', 'retrying'].includes(pending.record.sendStatus) && pending.sendAttempts < 2) {
-        pending.record.sendStatus = 'retrying';
-        pending.record.sendMessage = 'Gửi thư lần 1/2 thất bại; thử gửi lần 2 sau 2 giây.';
-        this.message = `${pending.record.sendMessage} ${pending.record.alias}`;
-        this.saveFollowup(pending.record);
-        await this.wait(2000);
-        if (!this.processing()) throw Object.assign(new Error('Lượt chạy không hoạt động.'), { code: 'CANCELLED' });
-        await this.sendVerification(pending.record, pending, this.proxies[accountIndex % this.proxies.length]);
-      }
-      if (pending.record.sendStatus === 'failed') {
+      if (typeof this.sendMail !== 'function') {
+        pending.record.sendMessage = 'Chưa cấu hình hàm sendMail.';
         await this.finishFollowup(accountIndex, client, { success: false, message: pending.record.sendMessage, errorCode: 'send_mail_failed' });
         return;
       }
@@ -466,7 +471,7 @@ class AliasBatch {
         } finally {
           try { await client?.close(); } catch (error) {
             const record = lastRecord || { mainEmail: this.accounts[accountIndex].email, alias: index === undefined ? '' : this.jobs[index].alias, jobId: index };
-            this.writeResult(this.failFile, `${record.mainEmail}|${record.alias}|session_close_failed\n`, record);
+            this.writeResult(this.failFile, this.failureLine(record, 'session_close_failed'), record);
           }
           this.clients.delete(client);
         }

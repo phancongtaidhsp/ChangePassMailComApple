@@ -56,50 +56,73 @@ class MailComInbox {
     const lifetime = Number.isFinite(data.expires_in) && data.expires_in > 0 ? data.expires_in : 60;
     this.expiresAt = Date.now() + Math.max(1, lifetime - 15) * 1000;
   }
-  async request(url, { accept, method = 'GET', contentType, timeout = 20000 } = {}) {
+  async request(url, { accept, method = 'GET', contentType, timeout = 20000, validate = response => response } = {}) {
+    // Token có ngân sách retry riêng, không bọc authenticate trong vòng lặp đọc thư.
     await this.authenticate();
-    const response = await this.client.http(url, { method, redirects: false, timeout,
-      ...(method === 'POST' ? { data: null } : {}),
-      headers: { Authorization: `Bearer ${this.token}`, Origin: 'https://webmailer.mail.com',
-        'X-UI-APP': 'mailcom.webmailer-mail-list/7.4.2', 'X-Request-ID': randomUUID(), Accept: accept,
-        ...(contentType ? { 'Content-Type': contentType } : {}) }
-    });
-    this.client.requireSuccess(response, 'Đọc Inbox');
-    return response;
+    return this.client.retry(async () => {
+      try {
+        const response = await this.client.http(url, { method, redirects: false, timeout,
+          ...(method === 'POST' ? { data: null } : {}),
+          headers: { Authorization: `Bearer ${this.token}`, Origin: 'https://webmailer.mail.com',
+            'X-UI-APP': 'mailcom.webmailer-mail-list/7.4.2', 'X-Request-ID': randomUUID(), Accept: accept,
+            ...(contentType ? { 'Content-Type': contentType } : {}) }
+        });
+        this.client.requireSuccess(response, 'Đọc Inbox');
+        return validate(response);
+      } catch (error) {
+        // API đọc không thay đổi dữ liệu: thử lại cả lỗi HTTP và phản hồi sai định dạng.
+        if (error.code !== 'CANCELLED') error.retryable = true;
+        throw error;
+      }
+    }, { stage: 'Đọc Inbox', attempts: 3 });
   }
   async listInbox({ offset = 0, amount = 50 } = {}) {
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(amount) || amount < 1 || amount > 100) {
       throw attention('Phân trang Inbox không hợp lệ.');
     }
     const query = new URLSearchParams({ folderTypeOrId: 'INBOX', offset: String(offset), amount: String(amount), orderBy: 'INTERNALDATE DESC' });
-    const response = await this.request(`${LIST}?${query}`, { method: 'POST', timeout: 32000, accept: LIST_ACCEPT,
-      contentType: 'application/vnd.1and1.mms.inboxadrequest-v1+json; charset=utf-8' });
-    const data = response.data;
-    if (!Array.isArray(data?.mailListElements) || !Number.isInteger(data.totalCount) || data.totalCount < 0) {
-      throw attention('Danh sách Inbox mail.com không đúng định dạng.');
-    }
-    const messages = data.mailListElements.filter(item => item?.type === 'mail').map(item => validateMessage(item.rawData));
-    return { messages, totalCount: data.totalCount };
+    return this.request(`${LIST}?${query}`, { method: 'POST', timeout: 32000, accept: LIST_ACCEPT,
+      contentType: 'application/vnd.1and1.mms.inboxadrequest-v1+json; charset=utf-8',
+      validate: response => {
+        const data = response.data;
+        if (!Array.isArray(data?.mailListElements) || !Number.isInteger(data.totalCount) || data.totalCount < 0) {
+          throw attention('Danh sách Inbox mail.com không đúng định dạng.');
+        }
+        const messages = data.mailListElements.filter(item => item?.type === 'mail').map(item => validateMessage(item.rawData));
+        return { messages, totalCount: data.totalCount };
+      }
+    });
   }
   async readMessage(id) {
     if (typeof id !== 'string' || !id || id.length > 2048) throw attention('Mã thư không hợp lệ.');
     const encoded = encodeURIComponent(id);
-    const header = await this.request(`${MAILBOX}/mailheader/${encoded}?absoluteURI=false`, { accept: HEADER_ACCEPT });
-    const message = validateMessage(header.data);
-    if (message.attribute.mailIdentifier !== id) throw attention('Nội dung thư không khớp mã thư yêu cầu.');
-    const response = await this.request(`${MAILBOX}/mailbody/${encoded}/Body?absoluteURI=false`, { accept: BODY_ACCEPT });
-    if (typeof response.data !== 'string' || !/^text\/(?:html|plain|vnd\.ui\.secure-v3\+html)(?:;|$)/i.test(response.headers?.['content-type'] || '')) {
-      throw attention('Nội dung thư mail.com không đúng định dạng.');
-    }
-    return { ...message, body: response.data };
+    const message = await this.request(`${MAILBOX}/mailheader/${encoded}?absoluteURI=false`, { accept: HEADER_ACCEPT,
+      validate: response => {
+        const message = validateMessage(response.data);
+        if (message.attribute.mailIdentifier !== id) throw attention('Nội dung thư không khớp mã thư yêu cầu.');
+        return message;
+      }
+    });
+    const body = await this.request(`${MAILBOX}/mailbody/${encoded}/Body?absoluteURI=false`, { accept: BODY_ACCEPT,
+      validate: response => {
+        if (typeof response.data !== 'string' || !/^text\/(?:html|plain|vnd\.ui\.secure-v3\+html)(?:;|$)/i.test(response.headers?.['content-type'] || '')) {
+          throw attention('Nội dung thư mail.com không đúng định dạng.');
+        }
+        return response.data;
+      }
+    });
+    return { ...message, body };
   }
   async readTextBody(id) {
     if (typeof id !== 'string' || !id || id.length > 2048) throw attention('Mã thư không hợp lệ.');
-    const response = await this.request(`${MAILBOX}/mailbody/${encodeURIComponent(id)}/Body?absoluteURI=false`, { accept: 'text/plain' });
-    if (typeof response.data !== 'string' || !/^text\/plain(?:;|$)/i.test(response.headers?.['content-type'] || '')) {
-      throw attention('Bản text của thư mail.com không đúng định dạng.');
-    }
-    return response.data;
+    return this.request(`${MAILBOX}/mailbody/${encodeURIComponent(id)}/Body?absoluteURI=false`, { accept: 'text/plain',
+      validate: response => {
+        if (typeof response.data !== 'string' || !/^text\/plain(?:;|$)/i.test(response.headers?.['content-type'] || '')) {
+          throw attention('Bản text của thư mail.com không đúng định dạng.');
+        }
+        return response.data;
+      }
+    });
   }
   async waitForAppleVerification({ recipient, since = 0, attempts = 5, intervalMs = 2000, maxPages = 5 } = {}) {
     recipient = address(recipient);
@@ -138,7 +161,7 @@ class MailComInbox {
     return { status: 'not_found', scanned, appleMessages, truncated };
   }
   async wait(ms) {
-    // Hủy ngay khi người dùng tạm dừng, kể cả đang chờ giữa hai lần poll.
+    // Phiên bị hủy thì ngắt chờ. Tạm dừng batch vẫn giữ phiên để xử lý hết alias.
     const signal = this.client.controller.signal;
     this.client.check();
     await new Promise(resolve => {

@@ -33,9 +33,9 @@ async function run() {
     assert.equal(fs.readFileSync(batch.mainFailFile, 'utf8'), 'bad@mail.com|main_login_failed\n');
     const failures = fs.readFileSync(batch.failFile, 'utf8');
     for (const [alias, code] of [['rejected', 'unable_add_alias'], ['existing', 'alias_already_exists'], ['no-link', 'apple_link_not_found'], ['cleanup', 'alias_cleanup_failed']]) {
-      assert(failures.includes(`good@mail.com|${alias}@mail.com|${code}\n`));
+      assert(failures.includes(`good@mail.com|secret|${alias}@mail.com|${code}\n`));
     }
-    assert(failures.trim().split('\n').every(line => /^[a-z][a-z0-9_]*$/.test(line.split('|')[2])));
+    assert(failures.trim().split('\n').every(line => /^[a-z][a-z0-9_]*$/.test(line.split('|').at(-1))));
     // Historical output participates in export even when no matching result remains in RAM.
     fs.appendFileSync(batch.successFile, 'old@mail.com|unrelated@mail.com|old-password\n');
     fs.appendFileSync(options.aliasFile, 'unrelated@mail.com\r\n');
@@ -102,7 +102,7 @@ async function run() {
     assert.equal(missing.filesRead, 0); assert.equal(missing.aliasesRemoved, 0);
     assert.equal(fs.readFileSync(offline.aliasFile, 'utf8'), offlineAlias);
     fs.writeFileSync(path.join(offlineDir, 'success.txt'), '\uFEFFold@mail.com|success@mail.com|password|with-pipe\r\ninvalid line\nold@mail.com|keep@mail.com|\n');
-    fs.writeFileSync(path.join(offlineDir, 'fail.txt'), 'old@mail.com|rejected@mail.com|unable_add_alias\nold@mail.com|keep@mail.com|inbox_read_failed\nold@mail.com|cleanup@mail.com|alias_cleanup_failed\nold@mail.com||result_write_failed\n');
+    fs.writeFileSync(path.join(offlineDir, 'fail.txt'), 'old@mail.com|rejected@mail.com|unable_add_alias\nold@mail.com| secret|with-pipe |rejected@mail.com|unable_add_alias\nold@mail.com|secret|keep@mail.com|inbox_read_failed\nold@mail.com|secret|cleanup@mail.com|alias_cleanup_failed\nold@mail.com|secret||result_write_failed\n');
     fs.writeFileSync(path.join(offlineDir, 'mailchinhfail.txt'), ' BAD@mail.com |main_login_failed\nkeep@mail.com|some_other_error\ninvalid\n');
     const sources = ['success.txt', 'fail.txt', 'mailchinhfail.txt'].map(name => fs.readFileSync(path.join(offlineDir, name), 'utf8'));
     // A read failure in the third file must not partially edit the input files.
@@ -123,6 +123,22 @@ async function run() {
     // Existing batch export also honors explicitly selected file paths.
     fs.writeFileSync(offline.aliasFile, 'success@mail.com\n');
     assert.equal(batch.exportInputFiles(offline).aliasesRemoved, 1);
+    // Preserve the main password exactly, including spaces and pipes, only in fail.txt.
+    fs.writeFileSync(offline.emailFile, 'main@mail.com| secret|with-pipe \n');
+    fs.writeFileSync(offline.aliasFile, 'rejected@mail.com\n');
+    const updates = [];
+    const passwordBatch = new AliasBatch({ ...offline, proxyFile: options.proxyFile, outputRoot: path.join(root, 'password-failure') }, {
+      createClient: () => ({ login: async () => {}, addAlias: async () => ({ status: 'failed', message: 'Rejected' }),
+        close: async () => { throw new Error(); }
+      }), onUpdate: update => updates.push(update)
+    });
+    await passwordBatch.run();
+    const passwordFailures = fs.readFileSync(passwordBatch.failFile, 'utf8');
+    assert(passwordFailures.includes('main@mail.com| secret|with-pipe |rejected@mail.com|unable_add_alias\n'));
+    assert(passwordFailures.includes('| secret|with-pipe |rejected@mail.com|session_close_failed\n'));
+    assert(!JSON.stringify(updates).includes('with-pipe'));
+    assert(!fs.readFileSync(passwordBatch.resultFile, 'utf8').includes('with-pipe'));
+    assert.equal(passwordBatch.exportInputFiles().aliasesRemoved, 1);
     console.log('Result export tests passed: disk source, historical results, offline/current selection, no backups, partial failure, malformed rows and repeated reads');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }

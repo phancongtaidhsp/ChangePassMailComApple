@@ -151,7 +151,7 @@ async function run() {
     assert.equal(independent.pendingInbox.size, 0); assert.equal(independent.snapshot().finalFailed, 6);
     const independentFailures = fs.readFileSync(independent.failFile, 'utf8').trim().split('\n');
     assert.equal(independentFailures.length, 7);
-    assert(independentFailures.includes(`${owners.get(manyAliases[0])}|${manyAliases[0]}|alias_cleanup_failed`));
+    assert(independentFailures.includes(`${owners.get(manyAliases[0])}|password|${manyAliases[0]}|alias_cleanup_failed`));
     fs.writeFileSync(options.emailFile, mains.join('\n'));
     fs.writeFileSync(options.aliasFile, aliases.join('\n'));
     // Pausing finishes current aliases without cancelling sessions or claiming new jobs.
@@ -191,12 +191,13 @@ async function run() {
           ? { status: 'failed', httpStatus: 412, message: 'HTTP 412' }
           : { status: 'added', message: 'verified' }; } };
     } });
+    replacement.wait = async () => {};
     await replacement.run();
     assert.deepEqual(tried, [['first@mail.com', 'one@mail.com'], ['first@mail.com', 'two@mail.com'], ['first@mail.com', 'three@mail.com']]);
-    assert.equal(sends.filter(([email, proxy]) => email === 'two@mail.com' && requireProxy(proxy) === sessionProxies.get('first@mail.com')).length, 2);
-    assert.equal(sends.filter(([email, proxy]) => email === 'three@mail.com' && requireProxy(proxy) === sessionProxies.get('first@mail.com')).length, 2);
+    assert.equal(sends.filter(([email, proxy]) => email === 'two@mail.com' && requireProxy(proxy) === sessionProxies.get('first@mail.com')).length, 5);
+    assert.equal(sends.filter(([email, proxy]) => email === 'three@mail.com' && requireProxy(proxy) === sessionProxies.get('first@mail.com')).length, 5);
     assert(sends.every(([, proxy]) => proxy === '127.0.0.1:8080:user:private-proxy-password'));
-    assert(notifications.some(message => message.includes('Gửi thư lần 1/2 thành công')));
+    assert(notifications.some(message => message.includes('Gửi thư lần 1/5 thành công')));
     assert.equal(replacement.snapshot().completed, 2); assert.equal(replacement.snapshot().failed, 1);
     assert.equal(replacement.latest.get(0).httpStatus, 412);
     assert.match(replacement.latest.get(0).message, /Không thể add mail phụ/);

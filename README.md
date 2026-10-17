@@ -79,12 +79,12 @@ Nếu HTML đã lọc (`secure-v3`) không có link khớp, tool đọc lại Bo
 với `Accept: text/plain` rồi trích URL. Một số thư bị mail.com bỏ tham số `to` khỏi
 link deref trong HTML dù bản text vẫn có đầy đủ link xác minh.
 
-Sau mỗi lần gửi, tool quét tối đa 5 lượt, nghỉ 2 giây giữa các lượt và dừng ngay khi
-tìm được link; mỗi lượt quét tối đa 5 trang × 50 thư mới nhất. Nếu gửi lần đầu thất
-bại (trả lỗi hoặc throw), tool chờ 2 giây rồi thử gửi lần hai, chưa kết luận thất
-bại hoặc xóa alias sau lần đầu. Chỉ đọc Inbox sau lần gửi thành công. Nếu lần gửi đầu không
-có link, tool gửi thư lần hai rồi quét thêm tối đa 5 lượt. Sau lần hai vẫn không có
-link thì xóa alias, ghi `fail.txt` và hoàn tất cặp. Khi gửi thật, chỉ xét thư từ thời
+Hàm `sendMail` được gọi tối đa **5 lần tổng cộng** cho mỗi alias, gồm cả những lần
+trả lỗi hoặc throw. Nghỉ 2 giây trước lần gửi tiếp theo. Chỉ đọc Inbox sau lần gửi
+thành công: quét tối đa 5 lượt, nghỉ 2 giây giữa các lượt; mỗi lượt quét tối đa
+5 trang × 50 thư mới nhất. Nếu gửi lỗi hoặc quét chưa có link thì tiếp tục gửi
+trong ngân sách còn lại; tìm được link thì dừng gửi ngay. Hết 5 lần gọi vẫn chưa
+có link thì xóa alias, ghi `fail.txt` và hoàn tất cặp. Khi gửi thật, chỉ xét thư từ thời
 điểm bắt đầu từng lần gửi; khi gửi giả lập, xét cả thư hiện có.
 
 Kết quả có `sendStatus`, `sendAttempts`, `inboxStatus`, `inboxMessage`; khi tìm thấy
@@ -92,7 +92,14 @@ có thêm `verificationLink` và `appleMessageId`. Link được lưu trong
 `alias-results.jsonl` nhưng không hiển thị trên bảng; không ghi toàn bộ nội dung thư.
 Các dòng `mail-followup` là cập nhật cho cùng `jobId`, không phải alias mới.
 
-Lỗi API/token/dữ liệu khi đọc Inbox kết thúc alias hiện tại: thử xóa alias, ghi
+API lấy danh sách, đọc header, nội dung HTML và bản text của thư thử tối đa **3 lần
+tổng cộng** cho từng request (gồm lần đầu), nghỉ **2 giây** giữa các lần lỗi; thành
+công thì dừng retry ngay. Áp dụng cho lỗi kết nối/timeout, HTTP lỗi và phản hồi sai
+định dạng. Tham số đầu vào không hợp lệ và request đã bị hủy không retry. Lấy token
+có ngân sách riêng tối đa 3 lần với lỗi tạm thời, không lồng thành 3 × 3 lần.
+Đây là retry request, tách biệt với 5 lượt quét tìm thư sau mỗi lần gửi.
+
+Lỗi API/token/dữ liệu khi đã hết retry đọc Inbox kết thúc alias hiện tại: thử xóa alias, ghi
 `fail.txt` rồi chạy alias tiếp theo. Nếu đã bấm Tạm dừng, luồng hoàn tất alias hiện tại
 rồi dừng, không lấy alias mới.
 
@@ -127,7 +134,7 @@ Thành công thì dừng ngay; hết 5 lần thì ghi thất bại. Trước khi
 xóa alias và đọc lại danh sách địa chỉ để xác nhận alias đã biến mất.
 
 Sau khi đã thêm alias thành công, mọi nhánh kết thúc đều đi qua bước dọn dẹp xóa
-alias, gồm gửi thư thất bại (trả lỗi hoặc throw), không có link sau hai lần gửi,
+alias, gồm gửi thư thất bại (trả lỗi hoặc throw), không có link sau tối đa 5 lần gọi gửi,
 hết lượt đổi pass, thiếu cấu hình hoặc lỗi xử lý kết thúc khác. Nếu chưa xóa được
 alias của cặp thất bại, ghi cả nguyên nhân ban đầu và lỗi dọn dẹp vào `fail.txt`,
 kết thúc cặp và lấy alias tiếp theo trên cùng mail chính. Không tự thử xóa lại alias
@@ -148,7 +155,7 @@ Kết quả hiển thị rõ là giả lập và ghi `passwordChangeStatus`,
 trong bộ nhớ và không đưa vào snapshot/log/JSONL. Khi đổi pass thành công, tool thử
 xóa alias rồi ghi `mail chính|alias|mật khẩu mới` vào `success.txt`; xóa alias lỗi vẫn
 được tính là đổi pass thành công; lỗi dọn dẹp được ghi thêm vào `fail.txt` và JSONL. Nếu bước đổi pass kết thúc
-không thành công, tool ghi `mail chính|alias|mã lỗi` vào `fail.txt`. Tạm dừng vẫn chạy
+không thành công, tool ghi `mail chính|password mail chính|alias|mã lỗi` vào `fail.txt`. Tạm dừng vẫn chạy
 hết các lượt thử của alias hiện tại, dọn dẹp và xuất kết quả trước khi dừng.
 
 `AliasBatch` nhận dependency `changePassword` và `generatePassword` để kiểm thử các
@@ -202,16 +209,22 @@ có thể thay đổi.
 
 Cookie/token chỉ giữ trong bộ nhớ từng client, xóa sau khi đóng phiên. Chỉ gửi request
 tới HTTPS mail.com; không chuyển tiếp mật khẩu bằng redirect POST sang host khác.
-Không ghi mật khẩu, cookie hoặc token vào kết quả. Khi gặp yêu cầu xác minh, 401/403/424
+Không ghi cookie hoặc token vào kết quả. Mật khẩu mail chính chỉ được thêm vào `fail.txt`,
+không đưa vào bảng, snapshot hay JSONL. Khi gặp yêu cầu xác minh, 401/403/424
 hoặc giới hạn 429, ghi lỗi vào file tương ứng và tiếp tục lượt tiếp theo.
 Không tự mở browser hoặc vượt qua xác minh.
 
 ## Kết quả và tiếp tục
 
 `success.txt` ghi mỗi dòng `mail chính|alias|mật khẩu mới` khi `changePassword`
-trả đúng `successfully`, kể cả khi xóa alias thất bại. `fail.txt` ghi `mail chính|alias|mã lỗi` khi tạo alias,
+trả đúng `successfully`, kể cả khi xóa alias thất bại. `fail.txt` ghi `mail chính|password mail chính|alias|mã lỗi` khi tạo alias,
 gửi thư, tìm link hoặc đổi pass kết thúc không thành công. Cả hai file ghi nối tiếp,
 quyền file là chỉ chủ máy đọc/ghi.
+
+Mật khẩu mail chính trong `fail.txt` lấy từ file tài khoản của lượt chạy, giữ nguyên
+ký tự, khoảng trắng và dấu `|`. Mọi loại lỗi trong file này đều dùng định dạng mới,
+kể cả lỗi dọn dẹp, ghi file và đóng phiên. Nút Xuất kết quả đọc được cả dòng cũ
+`mail chính|alias|mã lỗi` và dòng mới; alias/mã lỗi được đọc từ hai cột cuối.
 
 `mailchinhfail.txt` ghi `mail chính|main_login_failed` khi đăng nhập thất bại. Không ghi
 mật khẩu đăng nhập vào file này. Một mail chính chỉ được giao cho một worker tại
@@ -273,9 +286,13 @@ Yêu cầu xác minh SMS, từ chối xác thực 401/403/407/424, dữ liệu s
 
 Request tạo alias chỉ gửi một lần. Sau đó đọc lại danh sách tối đa **3 lần**, cách
 nhau **2 giây** để xác nhận. Không lồng thêm 3 lần retry vào mỗi lượt xác nhận.
-Request xóa alias gửi tối đa **3 lần** khi gặp lỗi tạm thời. Trước khi gửi lại,
+Request xóa alias gửi tối đa **3 lần**, nghỉ **2 giây**, khi gặp lỗi tạm thời hoặc
+HTTP **401/403/407/424**. Quy tắc mở rộng này chỉ áp dụng cho request xóa alias. Trước khi gửi lại,
 tool đọc danh sách: alias đã biến mất thì kết thúc ngay, không gửi xóa lần nữa.
-Nếu chưa đối chiếu được, không gửi lại mù mà chuyển sang xác nhận cuối. Sau khi
+Nếu POST xóa bị timeout/chưa rõ kết quả mà chưa đối chiếu được, chuyển sang xác
+nhận cuối. Nếu POST đã bị từ chối bằng 401/403/407/424 thì vẫn thử tiếp trong ngân
+sách 3 lần khi GET đối chiếu cũng lỗi xác thực/kết nối. Dừng gửi lại nếu phát hiện
+alias đã thành địa chỉ mặc định hoặc không cho phép xóa. Sau khi
 gửi xong, đọc lại danh sách tối đa **3 lần**, cách nhau **2 giây** để xác nhận xóa.
 Thành công hoặc đã xác nhận alias không còn thì dừng ngay. Tạm dừng không gửi thêm
 alias mới; các request và retry cần thiết cho alias hiện tại vẫn chạy đến kết quả cuối.

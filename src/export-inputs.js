@@ -34,10 +34,17 @@ function exportResultsFromFiles(options, { io = fs } = {}) {
       if (name === 'mailchinhfail.txt') {
         if (parts.length !== 2 || !validEmail(main)) { skippedRecords++; continue; }
         if (parts[1].trim() === 'main_login_failed') mains.add(main);
+      } else if (name === 'fail.txt') {
+        // Hỗ trợ dòng cũ main|alias|code và dòng mới main|password|alias|code.
+        // Đọc alias/code từ cuối để giữ đúng mật khẩu có chứa dấu |.
+        const alias = (parts.at(-2) || '').trim().toLowerCase();
+        const code = (parts.at(-1) || '').trim();
+        if (parts.length < 3 || !validEmail(main) || !validEmail(alias) || !code) { skippedRecords++; continue; }
+        if (code === 'unable_add_alias') aliases.add(alias);
       } else {
         const alias = (parts[1] || '').trim().toLowerCase();
         if (parts.length < 3 || !validEmail(main) || !validEmail(alias) || !parts.slice(2).join('|').trim()) { skippedRecords++; continue; }
-        if (name === 'success.txt' || parts.length === 3 && parts[2].trim() === 'unable_add_alias') aliases.add(alias);
+        aliases.add(alias);
       }
     }
   }

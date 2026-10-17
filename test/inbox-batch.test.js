@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { AliasBatch } = require('../src/alias-batch');
+const { MailComAliasClient } = require('../src/services/mailcom-alias');
 
 async function run() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inbox-batch-'));
@@ -32,6 +33,32 @@ async function run() {
     assert.equal(batch.results.get(0).exportStatus, 'fail');
     const output = fs.readFileSync(batch.resultFile, 'utf8');
     assert(output.includes('Inbox unavailable')); assert(!output.includes('private response')); assert(!output.includes('secret'));
+    // Exhausted HTTP read retries still clean up exactly once, including a graceful stop.
+    let exhaustedReads = 0, exhaustedCleanup = 0, exhaustedSends = 0;
+    const retryWaits = [];
+    const exhausted = new AliasBatch({ ...options, outputRoot: path.join(root, 'exhausted-read-retries') }, {
+      sendMail: async () => { exhaustedSends++; return 'successfully'; },
+      createClient: () => {
+        const client = new MailComAliasClient(() => {}, { proxy: rawProxy,
+          pause: async ms => { retryWaits.push(ms); exhausted.pause(); },
+          request: async config => {
+            if (new URL(config.url).pathname.endsWith('/token')) return { status: 200, data: { access_token: 'fixture', expires_in: 3600 }, headers: {} };
+            assert.equal(new URL(config.url).hostname, 'maillist.mail.com');
+            exhaustedReads++; return { status: 503, data: {}, headers: {} };
+          }
+        });
+        client.login = async () => { client.navsid = 'fixture'; };
+        client.addAlias = async () => ({ status: 'added' });
+        client.removeAlias = async () => { exhaustedCleanup++; return { status: 'removed' }; };
+        return client;
+      }
+    });
+    await exhausted.run();
+    assert.equal(exhausted.state, 'completed'); assert.equal(exhaustedReads, 3);
+    assert.equal(exhaustedCleanup, 1); assert.equal(exhaustedSends, 1);
+    assert.deepEqual(retryWaits, [2000, 2000]);
+    assert.equal(fs.readFileSync(exhausted.failFile, 'utf8'), 'main@mail.com|secret|alias@mail.com|inbox_read_failed\n');
+    assert.equal(exhausted.pendingInbox.size, 0);
     for (const sent of [false, 'successfully']) {
       let checked = false, sendsForScenario = 0, removed = 0;
       const b = new AliasBatch(options, { sendMail: async () => { sendsForScenario++; return sent; }, createClient: () => ({
@@ -41,7 +68,7 @@ async function run() {
       }) });
       b.wait = async () => {};
       await b.run(); assert.equal(checked, sent === 'successfully'); assert.equal(b.state, 'completed');
-      assert.equal(sendsForScenario, 2);
+      assert.equal(sendsForScenario, 5);
       assert.equal(removed, 1);
     }
     for (const scenario of ['send-return-failed', 'send-throws', 'second-send-fails', 'inbox-terminal-error', 'generate-password-error']) {
@@ -71,10 +98,10 @@ async function run() {
       assert.equal(b.state, 'completed'); assert.equal(b.pendingInbox.size, 0);
       assert.equal(events.filter(x => x === 'remove').length, 1);
       assert(events.indexOf('remove') < events.indexOf('export'), 'Cleanup must happen before exporting failure');
-      assert.equal(sends, scenario === 'second-send-fails' || scenario.startsWith('send-') ? 2 : 1);
+      assert.equal(sends, scenario === 'second-send-fails' || scenario.startsWith('send-') ? 5 : 1);
       assert.equal(reads, scenario.startsWith('send-') ? 0 : 1);
       assert.equal(fs.readFileSync(b.successFile, 'utf8'), '');
-      assert.match(fs.readFileSync(b.failFile, 'utf8'), /^main@mail\.com\|alias@mail\.com\|/);
+      assert.match(fs.readFileSync(b.failFile, 'utf8'), /^main@mail\.com\|secret\|alias@mail\.com\|/);
       assert(!fs.readFileSync(b.resultFile, 'utf8').includes('private'));
     }
     // A failed first send must not export or clean up before the second attempt.
@@ -103,22 +130,51 @@ async function run() {
           createClient: () => ({ login: async () => {}, close: async () => {}, cancel() {},
             addAlias: async () => ({ status: 'added' }),
             waitForAppleVerification: async ({ since, attempts }) => {
-              reads++; assert.equal(sends, 2); assert(since > 0); assert.equal(attempts, 5);
+              reads++; assert.equal(sends, reads + 1); assert(since > 0); assert.equal(attempts, 5);
               return found ? { status: 'found', link } : { status: 'not_found' };
             },
-            removeAlias: async () => { removes++; assert.equal(reads, 1); return { status: 'removed' }; }
+            removeAlias: async () => { removes++; assert.equal(reads, found ? 1 : 4); return { status: 'removed' }; }
           }),
           onUpdate: update => { if (update.result) snapshots.push({ ...update.result }); }
         });
         b.wait = async ms => waits.push(ms);
         await b.run();
-        assert.equal(sends, 2); assert.equal(reads, 1); assert.equal(removes, 1);
-        assert.equal(changes, found ? 2 : 0); assert.deepEqual(waits, found ? [2000, 2000] : [2000]);
+        assert.equal(sends, found ? 2 : 5); assert.equal(reads, found ? 1 : 4); assert.equal(removes, 1);
+        assert.equal(changes, found ? 2 : 0); assert.deepEqual(waits, found ? [2000, 2000] : Array(4).fill(2000));
         const retry = snapshots.find(record => record.sendStatus === 'retrying');
         assert(retry); assert.equal(retry.exportStatus, undefined); assert.equal(retry.cleanupStatus, undefined);
         assert.equal(b.finalCounts.success, found ? 1 : 0); assert.equal(b.finalCounts.failed, found ? 0 : 1);
         assert.equal(fs.readFileSync(b.failFile, 'utf8').trim().split('\n').filter(Boolean).length, found ? 0 : 1);
       }
+    }
+    // The fifth send is usable, including failures between successful sends without a link.
+    for (const sequence of [[false, false, false, false, true], [true, false, true, false, true]]) {
+      let sends = 0, reads = 0, removes = 0, changes = 0;
+      const waits = [];
+      const b = new AliasBatch({ ...options, outputRoot: path.join(root, `fifth-send-${sequence[0]}`) }, {
+        sendMail: async (alias, proxy) => {
+          assert.equal(alias, 'alias@mail.com'); assert.equal(proxy, rawProxy);
+          assert.equal(removes, 0); assert.equal(fs.readFileSync(b.failFile, 'utf8'), '');
+          return sequence[sends++] ? 'successfully' : 'failed';
+        },
+        generatePassword: () => 'fixture-password',
+        changePassword: async () => { changes++; return 'successfully'; },
+        createClient: () => ({ login: async () => {}, close: async () => {},
+          addAlias: async () => ({ status: 'added' }),
+          waitForAppleVerification: async ({ attempts }) => {
+            reads++; assert.equal(attempts, 5);
+            return sends === 5 ? { status: 'found', link } : { status: 'not_found' };
+          },
+          removeAlias: async () => { removes++; assert.equal(sends, 5); return { status: 'removed' }; }
+        })
+      });
+      b.wait = async ms => waits.push(ms);
+      await b.run();
+      assert.equal(sends, 5); assert.equal(reads, sequence.filter(Boolean).length);
+      assert.equal(changes, 1); assert.equal(removes, 1); assert.equal(b.finalCounts.success, 1);
+      assert.deepEqual(waits, Array(4).fill(2000));
+      assert.equal(fs.readFileSync(b.failFile, 'utf8'), '');
+      assert.match(fs.readFileSync(b.successFile, 'utf8'), /fixture-password/);
     }
     // Pausing while waiting for the retry still finishes the current alias.
     let resumeSends = 0, resumeReads = 0, resumeRemoves = 0;
@@ -153,7 +209,7 @@ async function run() {
     cleanupOnly.wait = async () => {};
     await cleanupOnly.run(); assert.equal(cleanupOnly.state, 'completed');
     assert.equal(cleanupOnly.pendingInbox.size, 0);
-    assert.equal(failedSendCalls, 2); assert.equal(failedSendAdds, 1); assert.equal(failedSendRemoves, 1);
+    assert.equal(failedSendCalls, 5); assert.equal(failedSendAdds, 1); assert.equal(failedSendRemoves, 1);
     assert.equal(fs.readFileSync(cleanupOnly.failFile, 'utf8').trim().split('\n').length, 2);
     assert(fs.readFileSync(cleanupOnly.failFile, 'utf8').includes('|alias_cleanup_failed\n'));
     let cleanupCalls = 0, cleanupSends = 0, cleanupReads = 0;
@@ -175,7 +231,7 @@ async function run() {
     assert.equal(cleanupSends, 1); assert.equal(cleanupReads, 1); assert.equal(cleanupCalls, 1);
     assert.equal(cleanupResume.results.get(0).cleanupStatus, 'error');
     assert.equal(fs.readFileSync(cleanupResume.successFile, 'utf8'), 'main@mail.com|alias@mail.com|fixture-password\n');
-    console.log('Inbox batch tests passed: resend once, cleanup, and success despite cleanup failure');
+    console.log('Inbox batch tests passed: five send calls, cleanup, and success despite cleanup failure');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

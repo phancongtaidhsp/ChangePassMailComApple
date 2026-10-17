@@ -112,7 +112,7 @@ async function run() {
       removes++;
       if (scenario === 'timeout-already-removed') { visible = false; throw new Error('private timeout'); }
       if (scenario === 'cancelled') { f.client.cancel(); throw new Error('private timeout'); }
-      if (scenario === 'permanent-error') return response({}, 403);
+      if (scenario === 'permanent-error') return response({}, 400);
       if (scenario === 'all-failed' || scenario === 'retry-success' && removes < 3) return response({}, 503);
       return response('', 204);
     });
@@ -127,6 +127,37 @@ async function run() {
     }
     if (scenario === 'timeout-already-removed') assert.deepEqual(f.waits, []);
     await f.client.close();
+  }
+  for (const status of [401, 403, 407, 424]) {
+    for (const scenario of ['third-success', 'all-failed', 'read-denied', 'already-removed', 'protected']) {
+      let removes = 0;
+      f = fixture(config => {
+        if (config.url === LIST) {
+          if (removes && scenario === 'read-denied') return response({}, status);
+          if (removes && scenario === 'protected') return response({ mailaddresslist: [main, { ...alias, defaultSenderAddress: true }] });
+          return addresses(!(removes && scenario === 'already-removed') && !(removes === 3 && scenario === 'third-success'));
+        }
+        assert.equal(config.url, removalUrl); assert.equal(config.method, 'POST');
+        removes++;
+        return removes === 3 && scenario === 'third-success' ? response('', 204) : response({}, status);
+      });
+      if (['third-success', 'already-removed'].includes(scenario)) {
+        assert.equal((await f.client.removeAlias(alias.address)).status, 'removed');
+      } else await assert.rejects(f.client.removeAlias(alias.address));
+      assert.equal(removes, ['already-removed', 'protected'].includes(scenario) ? 1 : 3);
+      if (scenario === 'already-removed') assert.deepEqual(f.waits, []);
+      if (['third-success', 'read-denied'].includes(scenario)) assert.deepEqual(f.waits, [2000, 2000]);
+      if (scenario === 'all-failed') assert.deepEqual(f.waits, [2000, 2000, 2000, 2000]);
+      await f.client.close();
+    }
+    // A POST timeout is still ambiguous: a denied reconciliation cannot justify another POST.
+    let removes = 0;
+    f = fixture(config => {
+      if (config.url === LIST) return removes ? response({}, status) : addresses(true);
+      removes++; throw new Error('private timeout');
+    });
+    await assert.rejects(f.client.removeAlias(alias.address));
+    assert.equal(removes, 1); await f.client.close();
   }
   console.log('Request retry tests passed: three-call budgets, 2s confirmations, single create, deletion reconciliation and cancellation');
 }

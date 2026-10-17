@@ -1,5 +1,6 @@
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { requireProxy } = require('./required-proxy');
+const DELETE_RETRY_STATUSES = new Set([401, 403, 407, 424]);
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { CookieJar } = require('tough-cookie');
@@ -102,7 +103,7 @@ class MailComAliasClient {
         if (!ignoreCancel && this.cancelled) this.check();
         throw Object.assign(attention('Request qua proxy lỗi kết nối hoặc quá thời gian chờ. Không chuyển sang kết nối trực tiếp; chưa xác nhận kết quả.'), { retryable: true });
       }
-      if (response.status === 407) throw attention('Proxy từ chối xác thực (HTTP 407). Kiểm tra cấu hình proxy; không chuyển sang kết nối trực tiếp.');
+      if (response.status === 407) throw Object.assign(attention('Proxy từ chối xác thực (HTTP 407). Kiểm tra cấu hình proxy; không chuyển sang kết nối trực tiếp.'), { httpStatus: 407 });
       const cookies = response.headers?.['set-cookie'] || [];
       for (const cookie of Array.isArray(cookies) ? cookies : [cookies]) await this.jar.setCookie(cookie, current, { ignoreError: true });
       if (![301, 302, 303, 307, 308].includes(response.status) || !redirects) return { ...response, url: current };
@@ -260,20 +261,29 @@ class MailComAliasClient {
           break;
         } catch (error) {
           lastError = error;
-          if (!error.retryable || attempt === 2 || this.cancelled) break;
+          if ((!error.retryable && !DELETE_RETRY_STATUSES.has(error.httpStatus)) || attempt === 2 || this.cancelled) break;
         }
         // Timeout/5xx không chứng minh thao tác chưa xảy ra. Đọc lại trước khi
         // gửi lần nữa; nếu không đối chiếu được thì chuyển sang xác nhận cuối.
-        try {
-          const updated = await this.listAddresses(true, 1);
+        const deletionRejected = DELETE_RETRY_STATUSES.has(lastError?.httpStatus);
+        let updated;
+        try { updated = await this.listAddresses(true, 1); }
+        catch (error) {
+          lastError = error;
+          // HTTP từ chối xóa là kết quả đã biết: vẫn thử POST tiếp nếu GET cũng
+          // bị lỗi xác thực/kết nối. Timeout POST chưa rõ kết quả thì phải dừng gửi lại.
+          if (!deletionRejected || (!error.retryable && !DELETE_RETRY_STATUSES.has(error.httpStatus))) break;
+        }
+        if (updated) {
           const target = updated.find(x => x.address.toLowerCase() === alias);
           if (!target) {
             return { status: 'removed', message: 'Đã xóa alias khỏi mail chính.' };
           }
           if (target.deletable === false || target.defaultSenderAddress || target.defaultReceiverAddress) {
-            throw attention('Alias không thể xóa khi đang là địa chỉ mặc định.');
+            lastError = attention('Alias không thể xóa khi đang là địa chỉ mặc định.');
+            break;
           }
-        } catch (error) { lastError = error; break; }
+        }
         this.report(`Xóa alias: thử lại ${attempt + 2}/3 sau 2 giây…`);
         await this.sleep(2000);
       }

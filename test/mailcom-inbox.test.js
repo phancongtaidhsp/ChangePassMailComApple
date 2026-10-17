@@ -7,16 +7,18 @@ const link = 'https://iforgot.apple.com/verify/email?key=fixture%2Bkey';
 const message = (id, from = 'Apple <appleid@id.apple.com>', to = recipient, date = 1000) => ({
   attribute: { mailIdentifier: id, internalDate: date }, mailHeader: { from, to: [to], cc: [], bcc: [] }
 });
-function fixture({ pages, bodies = {}, textBodies = {}, malformed = false, mismatch = false, denied = false } = {}) {
-  const calls = [];
+function fixture({ pages, bodies = {}, textBodies = {}, malformed = false, mismatch = false, denied = false, failRequest } = {}) {
+  const calls = [], waits = [];
   let rounds = 0;
-  const client = new MailComAliasClient(() => {}, { proxy: 'http://127.0.0.1:8080', request: async config => {
+  const client = new MailComAliasClient(() => {}, { proxy: 'http://127.0.0.1:8080', pause: async ms => waits.push(ms), request: async config => {
     calls.push(config);
     assert.equal(config.proxy, false);
     assert.equal(config.httpsAgent, client.agent);
     assert.equal(config.maxRedirects, 0);
     const url = new URL(config.url);
     const response = (data, status = 200, headers = {}) => ({ status, data, headers });
+    const failure = failRequest?.(config);
+    if (failure) return failure;
     if (url.pathname.endsWith('/token')) {
       assert.equal(new URLSearchParams(config.data).get('scope'), 'mail_mailbox_r');
       assert.equal(url.searchParams.get('sid'), 'fixture-sid');
@@ -49,7 +51,7 @@ function fixture({ pages, bodies = {}, textBodies = {}, malformed = false, misma
     throw new Error('Unexpected request');
   } });
   client.navsid = 'fixture-sid';
-  return { client, calls };
+  return { client, calls, waits };
 }
 
 async function run() {
@@ -96,6 +98,56 @@ async function run() {
     await assert.rejects(f.client.waitForAppleVerification({ recipient, attempts: 1 }), e => e.code === 'NEEDS_ATTENTION');
     await f.client.close();
   }
+  // Each read endpoint has its own three-call budget, including HTTP/schema errors.
+  const endpoint = config => {
+    const url = new URL(config.url);
+    if (url.pathname.endsWith('/token')) return 'token';
+    if (url.hostname === 'maillist.mail.com') return 'list';
+    if (url.pathname.includes('/mailheader/')) return 'header';
+    return config.headers.Accept === 'text/plain' ? 'text' : 'html';
+  };
+  for (const target of ['list', 'header', 'html', 'text']) {
+    for (const kind of ['network', 401, 403, 424, 429, 503, 'schema']) {
+      for (const succeedsAt of [1, 3, Infinity]) {
+        let requests = 0;
+        f = fixture({
+          bodies: { one: target === 'text' ? 'No HTML link.' : `<a href="${link}">Verify</a>` },
+          textBodies: { one: link },
+          failRequest: config => {
+            if (endpoint(config) !== target || ++requests >= succeedsAt) return;
+            if (kind === 'network') throw new Error('private network detail');
+            if (kind !== 'schema') return { status: kind, data: {}, headers: {} };
+            return { status: 200, data: target === 'header' ? message('wrong-id') : {}, headers: {} };
+          }
+        });
+        if (succeedsAt === Infinity) {
+          await assert.rejects(f.client.waitForAppleVerification({ recipient }), error => error.code === 'NEEDS_ATTENTION');
+        } else {
+          const found = await f.client.waitForAppleVerification({ recipient });
+          assert.equal(found.status, 'found'); assert.equal(found.link, link);
+        }
+        assert.equal(requests, Math.min(succeedsAt, 3));
+        assert.deepEqual(f.waits, Array(requests - 1).fill(2000));
+        assert.equal(f.calls.filter(config => endpoint(config) === 'token').length, 1);
+        assert.equal(f.calls.filter(config => endpoint(config) === 'list').length, target === 'list' ? requests : 1);
+        if (target === 'html' || target === 'text') assert.equal(f.calls.filter(config => endpoint(config) === 'header').length, 1);
+        if (target === 'text') assert.equal(f.calls.filter(config => endpoint(config) === 'html').length, 1);
+        const retried = f.calls.filter(config => endpoint(config) === target);
+        assert.equal(new Set(retried.map(config => config.headers['X-Request-ID'])).size, requests);
+        assert(retried.every(config => config.url === retried[0].url && config.timeout === (target === 'list' ? 32000 : 20000)));
+        await f.client.close();
+      }
+    }
+  }
+  // Token acquisition is outside read retry: no 3 x 3 amplification or read on auth failure.
+  f = fixture({ failRequest: config => endpoint(config) === 'token' ? { status: 503, data: {}, headers: {} } : undefined });
+  await assert.rejects(f.client.listInbox());
+  assert.equal(f.calls.length, 3); assert.deepEqual(f.waits, [2000, 2000]); await f.client.close();
+  // An explicit client cancellation stops retry; batch graceful pause never cancels the client.
+  f = fixture({ denied: true });
+  f.client.sleep = async () => f.client.cancel();
+  await assert.rejects(f.client.listInbox(), error => error.code === 'CANCELLED');
+  assert.equal(f.calls.filter(config => endpoint(config) === 'list').length, 1); await f.client.close();
   // Mặc định 5 lượt, nghỉ 2 giây; không chờ thêm sau khi tìm thấy hoặc hết lượt.
   for (const foundAt of [3, Infinity]) {
     f = fixture();

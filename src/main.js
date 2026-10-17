@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path');
 const { AliasBatch } = require('./alias-batch');
+const { exportResultsFromFiles } = require('./export-inputs');
 const { sendMail, changePassword } = require('./services/apple');
 
 if (require('electron-squirrel-startup')) app.quit();
@@ -74,20 +75,15 @@ handle('batch:start', options => {
   return batch.snapshot();
 });
 handle('batch:pause', () => { batch?.pause(); });
-handle('batch:resume', () => {
-  if (busy() || batch?.state !== 'paused') throw new Error('Không có lượt đang tạm dừng.');
-  launch();
-  return batch.snapshot();
-});
 handle('results:open', async () => {
   if (!batch) throw new Error('Chưa có kết quả.');
   const error = await shell.openPath(batch.outputDir);
   if (error) throw new Error(error);
 });
 handle('results:retry-write', () => batch?.flushWrites());
-handle('results:export', () => {
-  if (busy() || !batch) throw new Error('Chờ lượt chạy hoàn tất trước khi xuất kết quả.');
-  return batch.exportInputFiles();
+handle('results:export', options => {
+  if (busy()) throw new Error('Chờ các luồng xử lý xong trước khi xuất kết quả.');
+  return batch ? batch.exportInputFiles(options) : exportResultsFromFiles(options);
 });
 
 

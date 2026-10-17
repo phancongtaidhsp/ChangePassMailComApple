@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadProxies, requireProxy } = require('./services/required-proxy');
 const { ResultWriter } = require('./result-writer');
-const { removeInputRows } = require('./export-inputs');
+const { exportResultsFromFiles } = require('./export-inputs');
 
 function lines(file) {
   if (!file || !fs.statSync(file).isFile()) throw new Error('Hãy chọn file TXT hợp lệ.');
@@ -109,25 +109,13 @@ class AliasBatch {
     this.emit();
     return this.snapshot();
   }
-  exportInputFiles() {
+  exportInputFiles(options = { emailFile: this.inputFiles.main, aliasFile: this.inputFiles.alias, outputRoot: this.outputDir }) {
     if (this.state !== 'completed') throw new Error('Chỉ xuất kết quả sau khi lượt chạy hoàn tất.');
     this.flushWrites();
     if (this.writer.pendingCount) throw new Error('Cần ghi hết kết quả TXT trước khi lọc file đầu vào. Bấm Thử ghi lại sau khi khắc phục lỗi ghi file.');
-    if (this.inputExport.done) return { ...this.inputExport };
-    const aliases = new Set([...this.results.values()]
-      .filter(record => record.exportStatus === 'success' || record.status === 'failed')
-      .map(record => record.alias));
-    const mains = new Set([...this.loginFailed].map(index => this.accounts[index].email));
     try {
-      for (const [file, emails, key, account] of [
-        [this.inputFiles.alias, aliases, 'aliasesRemoved', false],
-        [this.inputFiles.main, mains, 'mainsRemoved', true]
-      ]) {
-        const result = removeInputRows(file, emails, { account });
-        this.inputExport[key] += result.removed;
-      }
-      this.inputExport.done = true;
-      this.inputExportMessage = `Đã xuất kết quả: xóa ${this.inputExport.aliasesRemoved} dòng alias và ${this.inputExport.mainsRemoved} dòng mail chính khỏi file đầu vào.`;
+      this.inputExport = exportResultsFromFiles(options);
+      this.inputExportMessage = this.inputExport.message;
       this.emit();
       return { ...this.inputExport };
     } catch (error) {
@@ -136,18 +124,18 @@ class AliasBatch {
       throw error;
     }
   }
-  pause(message = 'Đang tạm dừng; nếu đã gửi request thêm alias, chờ xác nhận kết quả…') {
+  pause(message = 'Đang tạm dừng: không nhận alias mới, chờ các luồng xử lý hết alias hiện tại…') {
     if (this.state !== 'running') return;
     this.state = 'pausing'; this.message = message;
-    for (const client of this.clients) client.cancel();
     for (const wake of this.waiters) wake();
     this.emit();
   }
-  wait(ms = this.delayMs) {
+  processing() { return ['running', 'pausing'].includes(this.state); }
+  wait(ms = this.delayMs, { idle = false } = {}) {
     return new Promise(resolve => {
       const wake = () => { clearTimeout(timer); this.waiters.delete(wake); resolve(); };
       const timer = setTimeout(wake, ms);
-      this.waiters.add(wake);
+      if (idle) this.waiters.add(wake);
     });
   }
   saveFollowup(record, displayRecord = record) {
@@ -237,7 +225,7 @@ class AliasBatch {
     record.finalMessage = message;
     try { await this.cleanupAlias(record, client); }
     catch (error) {
-      if (!success && error.code === 'CANCELLED' && this.state !== 'running') throw error;
+      if (!success && error.code === 'CANCELLED' && !this.processing()) throw error;
       if (!success) record.finalMessage = `${message} Dọn dẹp thất bại: ${record.cleanupMessage}`;
       this.writeResult(this.failFile, `${record.mainEmail}|${record.alias}|alias_cleanup_failed\n`, record);
     }
@@ -294,7 +282,7 @@ class AliasBatch {
   async changePasswordForRecord(record, proxy) {
     if (record.passwordChangeStatus === 'successfully') return true;
     while ((record.passwordChangeAttempts || 0) < 5) {
-      if (this.state !== 'running') {
+      if (!this.processing()) {
         record.passwordChangeStatus = 'paused';
         record.passwordChangeMessage = 'Đã tạm dừng đổi mật khẩu giả lập; Tiếp tục sẽ dùng link đã lấy.';
         this.saveFollowup(record);
@@ -325,7 +313,7 @@ class AliasBatch {
         ? 'Đổi mật khẩu giả lập thất bại sau 5 lần.'
         : `Đổi mật khẩu giả lập chưa thành công (${record.passwordChangeAttempts}/5); thử lại sau 2 giây.`;
       this.saveFollowup(record);
-      if (record.passwordChangeAttempts < 5 && this.state === 'running') await this.wait(2000);
+      if (record.passwordChangeAttempts < 5 && this.processing()) await this.wait(2000);
     }
     return false;
   }
@@ -341,7 +329,7 @@ class AliasBatch {
   }
   async processFollowup(accountIndex, client) {
     const pending = this.pendingInbox.get(accountIndex);
-    if (this.state !== 'running') throw Object.assign(new Error('Đã tạm dừng.'), { code: 'CANCELLED', safeMessage: 'Đã tạm dừng. Tiếp tục sẽ xử lý đúng alias đang chờ.' });
+    if (!this.processing()) throw Object.assign(new Error('Lượt chạy không hoạt động.'), { code: 'CANCELLED' });
     if (pending.completion) return this.finishFollowup(accountIndex, client);
     try {
       if (!pending.sendAttempts) await this.sendVerification(pending.record, pending, this.proxies[accountIndex % this.proxies.length]);
@@ -351,7 +339,7 @@ class AliasBatch {
         this.message = `${pending.record.sendMessage} ${pending.record.alias}`;
         this.saveFollowup(pending.record);
         await this.wait(2000);
-        if (this.state !== 'running') throw Object.assign(new Error('Đã tạm dừng.'), { code: 'CANCELLED', safeMessage: 'Đã tạm dừng trước lần gửi thư thứ hai.' });
+        if (!this.processing()) throw Object.assign(new Error('Lượt chạy không hoạt động.'), { code: 'CANCELLED' });
         await this.sendVerification(pending.record, pending, this.proxies[accountIndex % this.proxies.length]);
       }
       if (pending.record.sendStatus === 'failed') {
@@ -360,7 +348,7 @@ class AliasBatch {
       }
       await this.readVerification(accountIndex, client);
     } catch (error) {
-      if (error.code === 'CANCELLED' && this.state !== 'running') throw error;
+      if (error.code === 'CANCELLED' && !this.processing()) throw error;
       // Lỗi kết thúc ngoài các nhánh dự kiến cũng phải đi qua bước xóa alias.
       await this.finishFollowup(accountIndex, client, { success: false, message: error.safeMessage || 'Lỗi xử lý sau khi thêm alias.' });
     }
@@ -394,7 +382,7 @@ class AliasBatch {
     this.jobs[index].uncertain = false;
   }
   async run() {
-    if (!['ready', 'paused'].includes(this.state)) throw new Error('Không thể tiếp tục lượt này.');
+    if (this.state !== 'ready') throw new Error('Lượt này đã chạy. Hãy bắt đầu lượt mới.');
     this.accountErrors.clear();
     this.state = 'running'; this.startedAt = Date.now(); this.message = 'Đang đăng nhập mail chính…'; this.emit();
     const pending = this.accounts.map((account, index) => index).filter(index => !this.finishedAccounts.has(index) && !this.loginFailed.has(index));
@@ -408,7 +396,10 @@ class AliasBatch {
         const proxy = requireProxy(this.proxies[accountIndex % this.proxies.length]);
         try {
           client = this.createClient(message => {
-            if (this.state === 'running') { this.message = `Luồng ${workerIndex + 1}: ${message}`; this.emit(); }
+            if (this.processing()) {
+              this.message = `${this.state === 'pausing' ? 'Đang tạm dừng, hoàn tất alias hiện tại. ' : ''}Luồng ${workerIndex + 1}: ${message}`;
+              this.emit();
+            }
           }, proxy);
           this.clients.add(client);
           await client.login(this.accounts[accountIndex]);
@@ -416,7 +407,7 @@ class AliasBatch {
           if (this.pendingInbox.has(accountIndex)) {
             await this.processFollowup(accountIndex, client);
             index = undefined;
-            if (this.state === 'running' && this.nextAlias < this.jobs.length) await this.wait();
+            if (this.state === 'running' && this.nextAlias < this.jobs.length) await this.wait(this.delayMs, { idle: true });
           }
           while (this.state === 'running') {
             if (index === undefined) index = this.claimAlias(accountIndex);
@@ -450,16 +441,16 @@ class AliasBatch {
               }
               if (done) { index = undefined; break; }
             } catch (error) {
-              if (error?.code === 'CANCELLED' && this.state !== 'running') throw error;
+              if (error?.code === 'CANCELLED' && !this.processing()) throw error;
               await this.failAlias(index, accountIndex, error, client);
               lastRecord = this.results.get(index);
             }
             index = undefined;
             if (this.state !== 'running' || this.nextAlias >= this.jobs.length) break;
-            await this.wait();
+            await this.wait(this.delayMs, { idle: true });
           }
         } catch (error) {
-          if (!(error?.code === 'CANCELLED' && this.state !== 'running')) {
+          if (!(error?.code === 'CANCELLED' && !this.processing())) {
             const message = error?.safeMessage || (loggedIn ? 'Lỗi xử lý tài khoản.' : 'Không đăng nhập được mail chính.');
             this.accountErrors.set(accountIndex, message);
             if (!loggedIn) {
@@ -479,14 +470,14 @@ class AliasBatch {
           }
           this.clients.delete(client);
         }
-        if (this.state === 'running' && next < pending.length) await this.wait();
+        if (this.state === 'running' && next < pending.length) await this.wait(this.delayMs, { idle: true });
       }
     };
     await Promise.all(Array.from({ length: Math.min(this.concurrency, pending.length) }, (_, i) => worker(i)));
     this.elapsedMs += Date.now() - this.startedAt; this.startedAt = null;
     const manuallyPaused = this.state !== 'running';
-    this.state = manuallyPaused ? 'paused' : 'completed';
-    this.message = manuallyPaused ? 'Đã tạm dừng theo yêu cầu. Bấm Tiếp tục để xử lý phần còn lại.'
+    this.state = 'completed';
+    this.message = manuallyPaused ? `Đã xử lý xong các alias đang chạy và tạm dừng. Còn ${this.jobs.length - this.nextAlias} alias chưa chạy. Có thể xuất kết quả hoặc bắt đầu lượt mới.`
       : `Hoàn tất: đổi mật khẩu thành công ${this.finalCounts.success} alias, thất bại ${this.finalCounts.failed} alias; ${this.loginFailed.size} mail chính đăng nhập lỗi.${this.nextAlias === this.jobs.length ? ' Đã hết mail phụ trong file.' : ` Còn ${this.jobs.length - this.nextAlias} alias chưa chạy do đã hết mail chính có thể dùng.`}`;
     this.writer.flush();
     this.emit();

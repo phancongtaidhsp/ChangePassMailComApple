@@ -32,14 +32,13 @@ function update(snapshot) {
   current = snapshot;
   tickAt = Date.now();
   const busy = ['running', 'pausing'].includes(snapshot.state);
-  const paused = snapshot.state === 'paused';
   if (Number.isInteger(snapshot.concurrency)) $('concurrency').value = snapshot.concurrency;
   if (Number.isFinite(snapshot.delayMs)) $('delayMs').value = snapshot.delayMs;
   for (const id of ['choose-email', 'choose-alias', 'choose-proxy', 'choose-output', 'concurrency', 'delayMs', 'start']) $(id).disabled = busy;
   $('start').disabled = busy || !!snapshot.pendingWrites;
   $('retry-writes').disabled = !snapshot.pendingWrites;
-  $('export-results').disabled = exporting || snapshot.state !== 'completed' || !!snapshot.pendingWrites || !!snapshot.inputsExported;
-  $('export-results').textContent = snapshot.inputsExported ? 'Đã xuất kết quả' : 'Xuất kết quả';
+  $('export-results').disabled = busy;
+  $('export-results').textContent = 'Xuất kết quả';
   $('input-export-status').hidden = !snapshot.inputExportMessage;
   $('input-export-status').textContent = snapshot.inputExportMessage || '';
   $('main-failures').textContent = snapshot.loginFailed || 0;
@@ -49,10 +48,8 @@ function update(snapshot) {
   if (!snapshot.pendingWrites) {
     for (const label of document.querySelectorAll('.export-message')) label.textContent = `Đã ghi ${label.dataset.file}.`;
   }
-  $('start').textContent = paused || snapshot.attempted ? 'Lượt đổi pass alias mới' : 'Bắt đầu đổi pass alias';
+  $('start').textContent = 'Bắt đầu đổi pass alias';
   $('pause').disabled = snapshot.state !== 'running';
-  $('resume').hidden = !paused;
-  $('resume').disabled = busy;
   $('open-results').disabled = !snapshot.outputDir;
   $('status').textContent = ({ ready: 'Sẵn sàng', running: 'Đang xử lý', pausing: 'Đang tạm dừng', paused: 'Đã tạm dừng', completed: 'Hoàn tất', error: 'Có lỗi' })[snapshot.state];
   $('passwordChanged').textContent = snapshot.finalSuccess || 0;
@@ -123,18 +120,22 @@ $('start').addEventListener('click', async () => {
   finally { requesting = false; }
 });
 $('pause').addEventListener('click', () => call(api.pause()).catch(showError));
-$('resume').addEventListener('click', () => call(api.resume()).catch(showError));
 $('open-results').addEventListener('click', () => call(api.openResults()).catch(showError));
 $('retry-writes').addEventListener('click', () => call(api.retryWrites()).catch(showError));
 $('export-results').addEventListener('click', async () => {
   if (exporting) return;
   exporting = true;
-  $('export-results').disabled = true;
-  try { await call(api.exportResults()); }
+  try {
+    const result = await call(api.exportResults({ emailFile: $('emailFile').value, aliasFile: $('aliasFile').value, outputRoot: $('outputRoot').value }));
+    if (result?.message) {
+      $('input-export-status').hidden = false;
+      $('input-export-status').textContent = result.message;
+    }
+  }
   catch (error) { showError(error); }
   finally {
     exporting = false;
-    $('export-results').disabled = current.state !== 'completed' || !!current.pendingWrites || !!current.inputsExported;
+    $('export-results').disabled = ['running', 'pausing'].includes(current.state);
   }
 });
 api.onUpdate(update);

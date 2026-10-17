@@ -120,7 +120,7 @@ async function run() {
         assert.equal(fs.readFileSync(b.failFile, 'utf8').trim().split('\n').filter(Boolean).length, found ? 0 : 1);
       }
     }
-    // Pausing while waiting for the retry preserves the second send for resume.
+    // Pausing while waiting for the retry still finishes the current alias.
     let resumeSends = 0, resumeReads = 0, resumeRemoves = 0;
     const paused = new AliasBatch({ ...options, outputRoot: path.join(root, 'pause-send-retry') }, {
       sendMail: async () => ++resumeSends === 1 ? 'failed' : 'successfully',
@@ -133,11 +133,8 @@ async function run() {
     });
     paused.wait = async () => { paused.pause(); };
     await paused.run();
-    assert.equal(paused.state, 'paused'); assert.equal(resumeSends, 1); assert.equal(resumeRemoves, 0);
+    assert.equal(paused.state, 'completed'); assert.equal(resumeSends, 2); assert.equal(resumeRemoves, 1);
     assert.equal(fs.readFileSync(paused.failFile, 'utf8'), '');
-    paused.wait = async () => {};
-    await paused.run();
-    assert.equal(paused.state, 'completed'); assert.equal(resumeSends, 2);
     assert.equal(resumeReads, 1); assert.equal(resumeRemoves, 1); assert.equal(paused.finalCounts.success, 1);
     // Failed cleanup exports the failure once and completes without a pause.
     let failedSendCalls = 0, failedSendAdds = 0, failedSendRemoves = 0;

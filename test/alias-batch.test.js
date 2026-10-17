@@ -28,12 +28,14 @@ async function run() {
       addAlias: async alias => ({ status: alias.startsWith('one') ? 'added' : 'existing', message: 'verified' }) }); };
     let batch, pauseOnce = true;
     batch = new AliasBatch(options, { createClient: makeClient, onUpdate: snapshot => { if (pauseOnce && snapshot.result && snapshot.completed === 1 && snapshot.existing === 0) { pauseOnce = false; batch.pause(); } } });
-    await batch.run(); assert.equal(batch.state, 'paused'); assert.equal(batch.results.size, 1);
-    await batch.run(); assert.equal(batch.state, 'completed'); assert.equal(batch.counts.added, 1); assert.equal(batch.counts.existing, 1);
-    assert.deepEqual(sessions, ['first@mail.com', 'first@mail.com']);
+    await batch.run(); assert.equal(batch.state, 'completed'); assert.equal(batch.results.size, 1);
+    assert.equal(batch.pendingInbox.size, 0); assert.equal(batch.snapshot().finalFailed, 1);
+    assert.equal(batch.snapshot().remainingAliases, 1);
+    await assert.rejects(batch.run(), /lượt mới/);
+    assert.deepEqual(sessions, ['first@mail.com']);
     const output = fs.readFileSync(batch.resultFile, 'utf8');
     assert(!output.includes('secret')); assert(!output.includes('private-proxy-password'));
-    assert.equal(output.trim().split('\n').map(JSON.parse).filter(row => !row.event).length, 2);
+    assert.equal(output.trim().split('\n').map(JSON.parse).filter(row => !row.event).length, 1);
     assert.equal(fs.readFileSync(options.aliasFile, 'utf8'), 'one@mail.com\none@mail.com\ntwo@mail.com\n');
     const pending = new AliasBatch({ ...options, outputRoot: path.join(root, 'add-errors') }, { createClient: () => ({ ...makeClient(), addAlias: async () => { const e = new Error('private detail'); e.code = 'NEEDS_ATTENTION'; e.safeMessage = 'needs verification'; throw e; } }) });
     await pending.run(); assert.equal(pending.state, 'completed'); assert.equal(pending.results.size, 2);
@@ -152,14 +154,15 @@ async function run() {
     assert(independentFailures.includes(`${owners.get(manyAliases[0])}|${manyAliases[0]}|alias_cleanup_failed`));
     fs.writeFileSync(options.emailFile, mains.join('\n'));
     fs.writeFileSync(options.aliasFile, aliases.join('\n'));
-    // Pausing cancels every session, waits for submitted outcomes, and claims no new jobs.
+    // Pausing finishes current aliases without cancelling sessions or claiming new jobs.
     let cancelled = 0, settled = 0;
     const pausing = new AliasBatch({ ...options, concurrency: 2 }, { createClient: () => ({
       login: async () => {}, addAlias: async () => { await new Promise(resolve => setTimeout(resolve, 20)); settled++; return { status: 'added', message: 'verified' }; },
       removeAlias: async () => ({ status: 'removed' }), cancel: () => { cancelled++; }, close: async () => {},
     }), onUpdate: snapshot => { if (snapshot.result && snapshot.completed === 1) pausing.pause(); } });
     await pausing.run();
-    assert.equal(pausing.state, 'paused'); assert.equal(cancelled, 2); assert.equal(settled, 2); assert.equal(pausing.results.size, 2);
+    assert.equal(pausing.state, 'completed'); assert.equal(cancelled, 0); assert.equal(settled, 2); assert.equal(pausing.results.size, 2);
+    assert.equal(pausing.pendingInbox.size, 0); assert.equal(pausing.snapshot().finalFailed, 2);
     // A session error holds only that account; other workers drain the queue.
     let sessionErrorCancels = 0;
     const failing = new AliasBatch({ ...options, concurrency: 2 }, { createClient: () => {

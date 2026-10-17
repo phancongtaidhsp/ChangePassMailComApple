@@ -51,10 +51,18 @@ async function run() {
   for (const id of ['emailFile', 'aliasFile', 'proxyFile', 'outputRoot']) {
     assert.equal(await evaluate(`document.getElementById(${JSON.stringify(id)}).value`), '');
   }
-  assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
+  assert.equal(await evaluate('document.getElementById("export-results").disabled'), false);
+  await click('export-results');
+  await waitFor('document.getElementById("message").textContent.includes("Hãy chọn thư mục kết quả")');
   await click('choose-email');
   await click('choose-alias');
   await click('choose-output');
+  // Saved files can be exported before any run, without a proxy or batch in RAM.
+  fs.appendFileSync(path.join(root, 'aliases.txt'), 'offline@mail.com\n');
+  fs.writeFileSync(path.join(root, 'success.txt'), 'old@mail.com|offline@mail.com|old-password\n');
+  await click('export-results');
+  await waitFor('document.getElementById("input-export-status").textContent.includes("xóa 1 dòng alias và 0 dòng mail chính")');
+  assert(!fs.readFileSync(path.join(root, 'aliases.txt'), 'utf8').includes('offline@mail.com'));
   await click('start');
   await waitFor('document.getElementById("message").textContent.includes("proxy")');
   await click('choose-proxy');
@@ -67,11 +75,16 @@ async function run() {
   assert.equal(await evaluate('document.getElementById("concurrency").value'), '2');
   assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
   await click('pause');
-  await waitFor('document.getElementById("status").textContent === "Đã tạm dừng"');
+  await waitFor('document.getElementById("status").textContent === "Đang tạm dừng"');
   assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
-  assert.equal(await evaluate('document.getElementById("resume").hidden'), false);
-  await click('resume');
+  assert.equal(await evaluate('document.getElementById("start").disabled'), true);
   await waitFor('document.getElementById("status").textContent === "Hoàn tất"');
+  for (const id of ['start', 'choose-email', 'choose-alias', 'choose-proxy', 'choose-output', 'concurrency', 'delayMs', 'export-results']) {
+    assert.equal(await evaluate(`document.getElementById(${JSON.stringify(id)}).disabled`), false);
+  }
+  assert.equal(await evaluate('document.getElementById("pause").disabled'), true);
+  assert.equal(await evaluate('document.getElementById("start").textContent'), 'Bắt đầu đổi pass alias');
+  assert.equal(await evaluate('document.getElementById("inProgress").textContent'), '0');
   assert.equal(await evaluate('document.querySelectorAll("#rows tr").length'), 2);
   assert.equal(await evaluate('document.getElementById("passwordChanged").textContent'), '1');
   assert.equal(await evaluate('document.getElementById("passwordFailed").textContent'), '1');
@@ -100,7 +113,7 @@ async function run() {
   assert.equal(await evaluate('document.querySelectorAll("#rows tr").length'), 2);
   assert(await evaluate('document.getElementById("rows").textContent.includes("HTTP 412")'));
   assert(await evaluate('document.getElementById("rows").textContent.includes("CATS")'));
-  assert.equal(await evaluate('document.getElementById("resume").hidden'), true);
+  assert.equal(await evaluate('document.getElementById("resume")'), null);
   const attempts = fs.readFileSync(path.join(root, 'alias-results.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(attempts[attempts.length - 1].status, 'failed');
   assert.equal(attempts[attempts.length - 1].httpStatus, 412);
@@ -129,7 +142,10 @@ async function run() {
     assert.equal(await evaluate('document.getElementById("write-status").hidden'), false);
     assert.equal(await evaluate('document.getElementById("retry-writes").disabled'), false);
     assert.equal(await evaluate('document.getElementById("start").disabled'), true);
-    assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
+    assert.equal(await evaluate('document.getElementById("export-results").disabled'), false);
+    await click('export-results');
+    await waitFor('document.getElementById("message").textContent.includes("ghi hết kết quả")');
+    assert.equal(await evaluate('document.getElementById("export-results").disabled'), false);
     assert(await evaluate('Array.from(document.querySelectorAll("#rows tr")).every(row => row.cells[0].textContent === "main2@mail.com")'));
   } finally { fs.openSync = originalOpen; }
   await click('retry-writes');
@@ -139,11 +155,13 @@ async function run() {
   assert(fs.readFileSync(path.join(root, 'mailchinhfail.txt'), 'utf8').includes('main@mail.com|main_login_failed'));
   assert.equal(await evaluate('document.getElementById("export-results").disabled'), false);
   await click('export-results');
-  await waitFor('document.getElementById("export-results").textContent === "Đã xuất kết quả"');
-  assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
+  await waitFor('document.getElementById("input-export-status").textContent.includes("Đã xuất kết quả")');
+  assert.equal(await evaluate('document.getElementById("export-results").disabled'), false);
   assert.equal(fs.readFileSync(path.join(root, 'main.txt'), 'utf8'), 'main2@mail.com|dummy-password2\n');
-  assert.equal(fs.readFileSync(path.join(root, 'aliases.txt'), 'utf8'), 'second@mail.com\n');
-  assert(await evaluate('document.getElementById("input-export-status").textContent.includes("xóa 2 dòng alias và 1 dòng mail chính")'));
+  assert.equal(fs.readFileSync(path.join(root, 'aliases.txt'), 'utf8'), '');
+  assert(await evaluate('document.getElementById("input-export-status").textContent.includes("xóa 3 dòng alias và 1 dòng mail chính")'));
+  await click('export-results');
+  await waitFor('document.getElementById("input-export-status").textContent.includes("xóa 0 dòng alias và 0 dòng mail chính")');
   assert.deepEqual(errors, []);
   assert.equal(BrowserWindow.getAllWindows().length, 1, 'Request mode must not open account browser windows');
   win.setSize(1160, 1020);

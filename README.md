@@ -33,7 +33,7 @@ https://username:password@proxy.example:8443
 ```
 
 Thay các ví dụ bằng proxy thực của bạn. Không hỗ trợ SOCKS. Proxy được phân bổ xoay
-vòng theo mail chính và giữ nguyên khi tạm dừng/tiếp tục; có thể dùng chung một proxy
+vòng theo mail chính và giữ nguyên cho đến khi xử lý xong alias; có thể dùng chung một proxy
 cho nhiều mail chính. Đăng nhập, redirect, token, đọc/thêm/xóa alias và logout đều đi qua
 HTTPS CONNECT agent. `proxy: false` trong Axios chỉ tắt cơ chế proxy từ biến môi
 trường để dùng agent đã cấu hình, không phải kết nối trực tiếp. Proxy lỗi hoặc trả
@@ -93,8 +93,8 @@ có thêm `verificationLink` và `appleMessageId`. Link được lưu trong
 Các dòng `mail-followup` là cập nhật cho cùng `jobId`, không phải alias mới.
 
 Lỗi API/token/dữ liệu khi đọc Inbox kết thúc alias hiện tại: thử xóa alias, ghi
-`fail.txt` rồi chạy alias tiếp theo. Chỉ thao tác Tạm dừng từ người dùng mới giữ
-bước đang chờ trong bộ nhớ để Tiếp tục; trạng thái này không phục hồi sau khi đóng ứng dụng.
+`fail.txt` rồi chạy alias tiếp theo. Nếu đã bấm Tạm dừng, luồng hoàn tất alias hiện tại
+rồi dừng, không lấy alias mới.
 
 Kiểm tra Inbox thật riêng, không tạo alias/gửi thư:
 
@@ -116,7 +116,7 @@ Luồng chính gọi `changePassword(newPassword, url, proxy)` trong
 `generatePassword()` trong `src/helper/helper.js`, `url` là link vừa trích xuất,
 `proxy` là chuỗi proxy gốc của mail chính, không chuyển thành object hoặc URL chuẩn hóa
 trước khi gọi `sendMail`/`changePassword`. Mỗi cặp sinh mật khẩu một lần, giữ cùng mật khẩu
-qua các lần thử và tạm dừng/tiếp tục. Định dạng giữ nguyên: 3 chữ hoa, 2 số,
+qua các lần thử, kể cả khi đang chờ dừng sau alias. Định dạng giữ nguyên: 3 chữ hoa, 2 số,
 1 chữ thường, 3 số, ký tự `@`, 3 chữ thường; dùng `crypto.randomInt` để sinh ký tự.
 Hàm hiện chỉ kiểm tra đầu vào, chờ 500 ms rồi trả chuỗi `successfully`; không gọi
 Apple, không mở link và không đổi mật khẩu thật.
@@ -148,8 +148,8 @@ Kết quả hiển thị rõ là giả lập và ghi `passwordChangeStatus`,
 trong bộ nhớ và không đưa vào snapshot/log/JSONL. Khi đổi pass thành công, tool thử
 xóa alias rồi ghi `mail chính|alias|mật khẩu mới` vào `success.txt`; xóa alias lỗi vẫn
 được tính là đổi pass thành công; lỗi dọn dẹp được ghi thêm vào `fail.txt` và JSONL. Nếu bước đổi pass kết thúc
-không thành công, tool ghi `mail chính|alias|mã lỗi` vào `fail.txt`. Tạm dừng giữ link và số lần
-đã thử; Tiếp tục không đọc Inbox, gửi thư hay thêm alias lại cho cặp đó.
+không thành công, tool ghi `mail chính|alias|mã lỗi` vào `fail.txt`. Tạm dừng vẫn chạy
+hết các lượt thử của alias hiện tại, dọn dẹp và xuất kết quả trước khi dừng.
 
 `AliasBatch` nhận dependency `changePassword` và `generatePassword` để kiểm thử các
 kết quả khác nhau. Không cần truyền `options.newPassword`. Lệnh `test:inbox:live`
@@ -171,10 +171,10 @@ Khi hết alias hoặc mọi mail chính đã đạt giới hạn, lượt kết
 thành công, thất bại, còn chưa chạy. Tiến độ tính theo tổng alias sau khi bỏ trùng.
 File đầu vào được giữ nguyên cho tới khi bấm **Xuất kết quả**; lượt chạy mới là hàng đợi mới.
 
-Tạm dừng giữ nguyên alias đang chờ cho mail chính đã nhận nó. Tiếp tục đăng nhập lại
-đúng tài khoản/proxy và tiếp tục bước còn dang dở. Nếu request tạo alias trước đó chưa
-rõ kết quả, tool chỉ đọc danh sách để đối chiếu: có alias thì tiếp tục xử lý, không
-có thì ghi thất bại; không gửi lại request tạo alias đó.
+Tạm dừng ngừng cấp alias và mail chính mới. Mỗi luồng giữ phiên để xử lý hết alias đã
+nhận, kể cả gửi lại thư, đọc Inbox, retry đổi pass và xóa alias. Khi tất cả luồng đã
+đóng phiên, các nút chọn file, cấu hình và Bắt đầu được bật lại. Không có nút Tiếp tục;
+có thể xuất kết quả rồi bắt đầu lượt mới với dữ liệu còn lại.
 
 Alias dùng chung hộp thư và mật khẩu với mail chính. Mỗi tài khoản có tối đa 10 địa chỉ,
 tính cả mail chính và các alias đã có. Đây không phải email khôi phục.
@@ -225,19 +225,30 @@ Các mã lỗi TXT: `unable_add_alias`, `alias_already_exists`, `send_mail_faile
 xử lý vừa lỗi xóa alias, `fail.txt` ghi hai dòng mã lỗi; thống kê chỉ tính một alias thất bại.
 Các dòng từ lượt cũ vẫn được giữ nguyên vì file kết quả ghi append.
 
-Nút **Xuất kết quả** chỉ bật khi lượt chạy hoàn tất và đã ghi hết kết quả. Khi bấm:
+Nút **Xuất kết quả** luôn bấm được khi tool không chạy, kể cả trước lượt đầu hoặc sau
+khi đã xuất. Chỉ bị vô hiệu khi đang chạy hoặc đang chờ các luồng hoàn tất để dừng.
+Mỗi lần bấm, tool đọc lại `success.txt`, `fail.txt`, `mailchinhfail.txt` trong thư mục
+kết quả đang chọn, rồi lọc file mail chính/mail phụ đang chọn. Không dùng danh sách
+kết quả trong RAM hay JSONL để quyết định xóa dòng. Dùng cả lịch sử đã append từ các
+lượt trước, kể cả sau khi mở lại ứng dụng; không cần chạy lượt mới hoặc chọn proxy.
+Còn kết quả chưa ghi được thì thử ghi lại và báo lỗi nếu vẫn không lưu được, chưa
+lọc đầu vào. Khi có kết quả:
 
-- Xóa mọi dòng trùng alias đổi pass thành công hoặc có kết quả thêm alias `failed`
-  khỏi file mail phụ của lượt chạy, bao gồm trường hợp giới hạn tạo địa chỉ.
-- Xóa mail chính đăng nhập thất bại khỏi file mail chính của lượt chạy.
+- Xóa mọi dòng trùng alias trong `success.txt` hoặc có mã `unable_add_alias` trong
+  `fail.txt` khỏi file mail phụ đang chọn, bao gồm trường hợp giới hạn tạo địa chỉ.
+- Xóa mail chính có mã `main_login_failed` trong `mailchinhfail.txt` khỏi file mail chính đang chọn.
 - Giữ alias đã tồn tại (`existing`), alias chưa chạy và alias lỗi sau khi đã thêm
-  nhưng chưa đổi pass thành công. Chỉ dùng kết quả lượt hiện tại để lọc.
+  nhưng chưa đổi pass thành công, trừ khi địa chỉ đó có trong kết quả thành công hoặc
+  `unable_add_alias` của lượt khác đã lưu trong cùng thư mục.
 - Cập nhật file đầu vào, giữ nguyên nội dung, BOM và kiểu xuống dòng của các dòng còn lại.
 
-Không sửa đầu vào trong lúc chạy hoặc khi tạm dừng. Đường dẫn đầu vào được giữ từ
-lúc bắt đầu, không lấy từ ô chọn file đã đổi sau đó. Bấm xuất lại sau khi thành công
-không lọc lần nữa. Nếu cập nhật một file lỗi, có thể thử lại; file đã cập nhật không
-bị trừ dòng hoặc đếm lại. File kết quả TXT vẫn được tự lưu nối tiếp trong lúc chạy.
+Không sửa đầu vào trong lúc chạy hoặc khi đang chờ dừng. Khi xuất, dùng đúng ba
+đường dẫn đang chọn: file mail chính, file mail phụ và thư mục kết quả. File TXT
+kết quả được giữ nguyên. File kết quả chưa tồn tại được xem là chưa có dữ liệu;
+dòng sai định dạng được bỏ qua và thông báo số dòng. Lỗi đọc file khác chặn lọc
+trước khi sửa đầu vào. Bấm xuất lại sẽ đọc lại kết quả mới trên đĩa; dòng đã xóa
+không bị đếm lại. Nếu cập nhật một file lỗi, có thể thử lại. Số dòng thông báo là
+số thực sự xóa ở lần bấm đó. File kết quả vẫn được tự lưu nối tiếp trong lúc chạy.
 
 Nếu hết dung lượng hoặc mất quyền ghi, worker vẫn tiếp tục. Kết quả chưa lưu (kể cả
 mật khẩu thành công) được giữ trong bộ nhớ và thử ghi lại khi có cập nhật kết quả
@@ -267,7 +278,7 @@ tool đọc danh sách: alias đã biến mất thì kết thúc ngay, không g�
 Nếu chưa đối chiếu được, không gửi lại mù mà chuyển sang xác nhận cuối. Sau khi
 gửi xong, đọc lại danh sách tối đa **3 lần**, cách nhau **2 giây** để xác nhận xóa.
 Thành công hoặc đã xác nhận alias không còn thì dừng ngay. Tạm dừng không gửi thêm
-request retry; request thay đổi dữ liệu đã gửi vẫn được đối chiếu kết quả.
+alias mới; các request và retry cần thiết cho alias hiện tại vẫn chạy đến kết quả cuối.
 
 Timeout mặc định là 20 giây/request, riêng danh sách Inbox là 32 giây và logout
 là 5 giây. Nếu POST tạo alias timeout hoặc chưa rõ kết quả, tool đối chiếu bằng GET;
@@ -275,9 +286,11 @@ nếu vẫn chưa xác nhận thì ghi thất bại, thử dọn dẹp alias đ�
 Không gửi lại request tạo alias đó. HTTP thành công riêng lẻ
 chưa đủ để báo `added`.
 
-**Tạm dừng** ngừng nhận cặp mới và hủy request chưa gửi tạo alias. Request tạo alias đã
-bắt đầu được chờ đối chiếu trước khi đóng phiên. Tất cả luồng phải xử lý xong phần đang
-chạy trước khi trạng thái chuyển sang Đã tạm dừng. File đầu vào giữ nguyên.
+**Tạm dừng** ngừng nhận alias mới và không hủy các request đang xử lý. Mỗi luồng phải
+xử lý xong alias hiện tại, dọn dẹp, lưu kết quả và đóng phiên trước khi lượt kết thúc.
+Trong thời gian đó giao diện hiện Đang tạm dừng; xong thì các nút trở về trạng thái
+không chạy, có thể xuất kết quả hoặc bắt đầu lượt mới. File đầu vào giữ nguyên cho tới
+khi bấm Xuất kết quả.
 Sau khi đóng ứng dụng, có thể chạy lại cùng file/cấu hình; alias đã có được nhận diện
 qua API. Lịch sử JSONL có thể chứa cùng cặp ở nhiều lượt.
 
@@ -291,7 +304,7 @@ npm run package
 ```
 
 Test giả lập kiểm tra form đăng nhập, cookie, chuyển hướng, payload tạo alias, xác nhận
-đúng tài khoản, tránh retry POST, kết quả timeout, giới hạn số luồng, tạm dừng/tiếp tục
+đúng tài khoản, tránh retry POST, kết quả timeout, giới hạn số luồng, hoàn tất alias khi tạm dừng
 và giao diện Electron. Test UI chỉ mở cửa sổ điều khiển, không mở browser mail.com.
 
 Đã kiểm thử thật đăng nhập, tạo alias biến thể được người dùng cho phép bằng HTTP API,

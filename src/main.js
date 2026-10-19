@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
 const { AliasBatch } = require('./alias-batch');
+const { AliasListBatch } = require('./alias-list-batch');
 const { exportResultsFromFiles } = require('./export-inputs');
 const { sendMail, changePassword } = require('./services/apple');
 
@@ -63,12 +65,14 @@ handle('file:choose', async kind => {
   return result.canceled ? null : result.filePaths[0];
 });
 handle('batch:start', options => {
-  if (busy()) throw new Error('Một lượt đổi pass alias đang chạy.');
+  if (busy()) throw new Error('Một lượt xử lý đang chạy.');
   if (batch?.snapshot().pendingWrites) throw new Error('Còn kết quả chưa ghi được. Khắc phục dung lượng/quyền ghi rồi bấm Thử ghi lại trước khi bắt đầu lượt mới.');
   if (!options || typeof options.outputRoot !== 'string' || typeof options.proxyFile !== 'string' ||
-      (options.mode === 'retry' ? typeof options.retryFile !== 'string' : typeof options.emailFile !== 'string' || typeof options.aliasFile !== 'string')) throw new Error('Cấu hình không hợp lệ.');
+      (options.mode === 'retry' ? typeof options.retryFile !== 'string'
+        : typeof options.emailFile !== 'string' || options.mode !== 'list' && typeof options.aliasFile !== 'string')) throw new Error('Cấu hình không hợp lệ.');
   if (!options.outputRoot.trim()) throw new Error('Hãy chọn thư mục kết quả.');
-  batch = new AliasBatch(options, { sendMail, changePassword, onUpdate: update => {
+  const Batch = options.mode === 'list' ? AliasListBatch : AliasBatch;
+  batch = new Batch(options, { sendMail, changePassword, onUpdate: update => {
     if (win && !win.isDestroyed()) win.webContents.send('batch:update', update);
   } });
   launch();
@@ -81,9 +85,21 @@ handle('results:open', async () => {
   if (error) throw new Error(error);
 });
 handle('results:retry-write', () => batch?.flushWrites());
-handle('results:export', options => {
+handle('results:export', async options => {
   if (busy()) throw new Error('Chờ các luồng xử lý xong trước khi xuất kết quả.');
-  return batch ? batch.exportInputFiles(options) : exportResultsFromFiles(options);
+  if (options?.mode === 'list') {
+    if (!options.outputRoot?.trim()) throw new Error('Hãy chọn thư mục kết quả.');
+    if (batch?.mode === 'list') {
+      batch.flushWrites();
+      if (batch.snapshot().pendingWrites) throw new Error('Cần ghi hết kết quả. Khắc phục lỗi ghi file rồi bấm Thử ghi lại.');
+    }
+    const file = path.join(path.resolve(options.outputRoot), 'mailchinh-alias.txt');
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error('Chưa có mailchinh-alias.txt trong thư mục kết quả đang chọn.');
+    const error = await shell.openPath(file);
+    if (error) throw new Error(error);
+    return { message: 'Đã mở mailchinh-alias.txt trong thư mục kết quả đang chọn.' };
+  }
+  return batch instanceof AliasBatch ? batch.exportInputFiles(options) : exportResultsFromFiles(options);
 });
 
 

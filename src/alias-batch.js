@@ -3,26 +3,13 @@ const path = require('node:path');
 const { loadProxies, requireProxy } = require('./services/required-proxy');
 const { ResultWriter } = require('./result-writer');
 const { exportResultsFromFiles } = require('./export-inputs');
+const { lines, validEmail, loadAccounts } = require('./batch-inputs');
 const MAX_SEND_ATTEMPTS = 5;
 
-function lines(file) {
-  if (!file || !fs.statSync(file).isFile()) throw new Error('Hãy chọn file TXT hợp lệ.');
-  if (fs.statSync(file).size > 20 * 1024 * 1024) throw new Error('File tối đa 20 MB.');
-  return fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter(x => x.trim());
-}
-const validEmail = value => /^[a-z0-9][a-z0-9._-]*@[a-z0-9.-]+\.[a-z]{2,}$/i.test(value);
 function loadPlan(options) {
   if (options.mode === 'retry') return loadRetryPlan(options);
   if (options.mode && options.mode !== 'normal') throw new Error('Chế độ chạy không hợp lệ.');
-  const accounts = [], seen = new Set();
-  for (const [index, line] of lines(options.emailFile).entries()) {
-    const separator = line.indexOf('|');
-    const email = line.slice(0, separator).trim().toLowerCase();
-    const password = line.slice(separator + 1);
-    if (separator < 1 || !validEmail(email) || !password) throw new Error(`Mail chính dòng ${index + 1}: cần email|password.`);
-    if (seen.has(email)) throw new Error(`Mail chính dòng ${index + 1} bị trùng.`);
-    seen.add(email); accounts.push({ email, password });
-  }
+  const accounts = loadAccounts(options.emailFile), seen = new Set(accounts.map(account => account.email));
   const raw = lines(options.aliasFile).map(x => x.trim().toLowerCase());
   raw.forEach((email, index) => { if (!validEmail(email)) throw new Error(`Mail phụ dòng ${index + 1} không hợp lệ: cần địa chỉ đầy đủ.`); });
   const aliases = [...new Set(raw)];

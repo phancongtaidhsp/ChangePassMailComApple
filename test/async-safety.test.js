@@ -18,6 +18,7 @@ function appleFixture(request) {
         assert.equal(config.timeout, 20000); return { request };
       } };
       if (name === 'cheerio') return require('cheerio');
+      if (name === './request-deadline') return require('../src/services/request-deadline');
       if (name === '../helper/helper') return {
         getCaptchaResult: async () => 'fixture', getCaptchaResultNope: async () => 'fixture'
       };
@@ -103,6 +104,7 @@ async function testHelperTimeouts() {
       setTimeout: callback => setTimeout(callback, 0),
       require: name => {
         if (name === 'node:crypto') return require('node:crypto');
+        if (name === '../services/request-deadline') return require('../src/services/request-deadline');
         if (name === 'axios') return { create: () => ({}) };
         if (name === 'axios-https-proxy-fix') return { request: async config => {
           calls.push(config); assert.equal(config.timeout, 20000);
@@ -133,6 +135,10 @@ async function testCaptchaResultSettlement() {
       clearTimeout: timer => { timers.delete(timer); clearTimeout(timer); },
       require: name => {
         if (name === 'node:crypto') return require('node:crypto');
+        if (name === '../services/request-deadline') {
+          const actual = require('../src/services/request-deadline');
+          return { ...actual, withDeadline: (operation, options) => actual.withDeadline(operation, { ...options, timeout: 15 }) };
+        }
         if (name === 'axios') return { create: () => ({ request: options => {
           calls.push(options); signals.push(options.signal);
           assert.equal(options.timeout, 20000);

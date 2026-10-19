@@ -20,6 +20,36 @@ npm start
 
 Bản đóng gói không kèm file tài khoản; chọn lại các file TXT trên máy.
 
+## Chế độ liệt kê alias hiện có
+
+Chọn **Chế độ → Liệt kê alias hiện có**, chọn file mail chính `email|password`,
+proxy và thư mục kết quả, rồi bấm **Bắt đầu liệt kê alias**. Không cần file mail phụ
+hoặc file record lỗi. Mỗi luồng đăng nhập một mail chính và đọc các alias đang có;
+số luồng mặc định 50, tự giảm theo số mail chính. Tạm dừng chờ các tài khoản đang
+xử lý đọc xong, lưu kết quả và đóng phiên trước khi dừng nhận tài khoản mới.
+
+Kết quả tự động **ghi nối tiếp** vào `mailchinh-alias.txt` trong thư mục đã chọn:
+
+```text
+main@mail.com|main-password|alias1@mail.com
+main@mail.com|main-password|alias2@mail.com
+main@mail.com|main-password|alias3@mail.com
+main@mail.com|main-password|alias4@mail.com
+```
+
+Mail chính có bốn alias tạo bốn dòng. Địa chỉ mail chính bị loại khỏi danh sách;
+alias trùng trong cùng phản hồi chỉ ghi một lần, kể cả alias đang là địa chỉ gửi
+mặc định vẫn được liệt kê. Mail chính không có alias hiện trạng thái **Không có
+alias** và không tạo dòng trong file. Chạy lại sẽ append thêm kết quả của lượt đó.
+
+Chế độ này chỉ đọc danh sách, giữ nguyên các địa chỉ và file đầu vào. Nút **Mở file
+danh sách** mở `mailchinh-alias.txt` tại thư mục kết quả đang chọn, dùng được cả sau
+khi mở lại ứng dụng. Lỗi đăng nhập ghi `mailchinhfail.txt` với mã `main_login_failed`;
+lỗi đọc danh sách ghi `fail.txt` theo dạng `mail chính|password mail chính||alias_list_failed`.
+Các luồng tiếp tục xử lý mail chính còn lại khi gặp lỗi; lỗi ghi file được giữ trong
+bộ nhớ để thử ghi lại giống chế độ thường. Mật khẩu mail chính chỉ ghi trong TXT,
+không đưa vào bảng hoặc snapshot gửi tới giao diện.
+
 ## Chế độ chạy lại record lỗi
 
 Chọn **Chế độ → Chạy lại record lỗi**, chọn file TXT có định dạng:
@@ -349,6 +379,11 @@ khi hết 20 giây và trả chuỗi rỗng nếu thiếu ID, dữ liệu không
 hoặc hết lượt chờ. Các bước HTTP của Apple trả trực tiếp
 Promise của request để lỗi đọc dữ liệu/cookie/chuyển hướng được trả về cho vòng
 retry, không bị kẹt trong một Promise bọc ngoài.
+Thư viện HTTP cũ hủy timeout nội bộ ngay khi nhận header; vì vậy các request dùng
+thư viện này còn được bọc thời hạn riêng đến khi đọc xong body. Hết hạn sẽ hủy
+request bằng CancelToken rồi trả lỗi, kể cả khi body không kết thúc. Request Mail.com
+và helper dùng Axios mới cũng trả lỗi khi hết thời hạn, dù adapter không trả lỗi
+sau khi nhận tín hiệu hủy. Phản hồi đến muộn không được tiếp tục quy trình đã timeout.
 
 Nếu POST tạo alias timeout hoặc chưa rõ kết quả, tool đối chiếu bằng GET;
 nếu vẫn chưa xác nhận thì ghi thất bại, thử dọn dẹp alias đó và lấy alias tiếp theo.
@@ -360,6 +395,19 @@ xử lý xong alias hiện tại, dọn dẹp, lưu kết quả và đóng phiê
 Trong thời gian đó giao diện hiện Đang tạm dừng; xong thì các nút trở về trạng thái
 không chạy, có thể xuất kết quả hoặc bắt đầu lượt mới. File đầu vào giữ nguyên cho tới
 khi bấm Xuất kết quả.
+Tạm dừng không đồng nghĩa ngắt ngay: vẫn hoàn tất các lần thử của alias hiện tại.
+Riêng xóa alias có thể gần **3 phút 52 giây** khi các bước dùng hết ngân sách retry
+và gần hết thời hạn chờ:
+đọc danh sách ban đầu tối đa 3 lần, POST tối đa 3 lần, đối chiếu trước khi gửi lại
+tối đa 2 lần, xác nhận cuối tối đa 3 lần, cộng các khoảng nghỉ 2 giây. Logout chờ
+tối đa 5 giây. Cookie được xóa trong bộ nhớ; controller luôn được hủy và agent được
+gọi giải phóng trong `finally`, kể cả khi xóa cookie lỗi. Gửi thư và Inbox có nhiều request/lượt chờ nên
+tổng thời gian hoàn tất một alias có thể dài hơn thời hạn của một request.
+
+Ghi kết quả hiện dùng I/O đồng bộ. Lỗi quyền ghi/hết dung lượng được bắt và giữ kết
+quả để thử lại; nếu bản thân ổ đĩa hoặc hệ điều hành treo một lệnh I/O thì timer
+JavaScript không thể ngắt lệnh đó. Đây là giới hạn còn lại ngoài các Promise/request
+đã được chặn chờ vô hạn.
 Sau khi đóng ứng dụng, có thể chạy lại cùng file/cấu hình; alias đã có được nhận diện
 qua API. Lịch sử JSONL có thể chứa cùng cặp ở nhiều lượt.
 

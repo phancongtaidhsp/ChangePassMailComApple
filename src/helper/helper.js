@@ -1,5 +1,6 @@
 const { randomInt } = require('node:crypto');
 const axiosDefault = require('axios');
+const { legacyRequest, withDeadline } = require('../services/request-deadline');
 const secretKey = "taipc";
 
 // Chỉ nạp dependency của helper cũ khi thực sự gọi helper đó.
@@ -256,12 +257,10 @@ const markAsDoneDaisySMS = async (apiKey, idDaisySMS) => {
 // Bound the entire request, including connection setup, and cancel it on expiry.
 const requestCaptcha = async (options) => {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
-  try {
-    return await instanceDefault.request({ ...options, timeout: 20000, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  return withDeadline(() => instanceDefault.request({ maxContentLength: 1024 * 1024,
+    ...options, timeout: 20000, signal: controller.signal }), {
+    timeout: 20000, cancel: () => controller.abort()
+  });
 }
 
 const getCaptchaId = async (apiKey, imageData) => {
@@ -380,7 +379,7 @@ const getProcessCaptcha = (proxy, apiKey, imageData) => {
     if (proxy) {
       config.proxy = proxy;
     }
-    axios.request(config)
+    legacyRequest(axios, config)
       .then((response) => {
         if (response?.data?.data) {
           resolve(response?.data?.data);
@@ -435,7 +434,7 @@ const getCaptchaResultNope = async (proxy, apiKey, imageData) => {
         config.proxy = proxy;
       }
       try {
-        let res = await axios.request(config);
+        let res = await legacyRequest(axios, config);
         if (res?.data?.data) {
           return res?.data?.data?.[0];
         } else {

@@ -1,6 +1,7 @@
 const axios = require('axios-https-proxy-fix');
 const cheerio = require('cheerio');
 const { getCaptchaResult, getCaptchaResultNope } = require('../helper/helper');
+const { legacyRequest } = require('./request-deadline');
 
 const instance = axios.create({
   timeout: 20000,
@@ -29,7 +30,7 @@ const getConfig = (proxy) => {
       'sec-ch-ua-platform': '"Windows"'
     }
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       const $ = cheerio.load(response.data);
       let sstt = null;
@@ -94,7 +95,7 @@ const getCaptchaReq = (proxy, xAppleWebToken, ifssp, ssttt) => {
       'sstt': ssttt
     }
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       let captchaImage = null;
       let captchaId = null;
@@ -153,7 +154,7 @@ const sendCaptcha = (proxy, email, xAppleWebToken, ifssp, ssttt, captchaId, capt
     maxRedirects: 0,
     data
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       if (response?.data) {
         let jsonString = JSON.stringify(response?.data)
@@ -230,7 +231,7 @@ const verifyCaptcha = (proxy, ifssp, xAppleWebToken, ssttt, location) => {
     },
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       let emailAddress = null;
       let sstt = null;
@@ -285,7 +286,7 @@ const recoverOption = (proxy, ifssp, xAppleWebToken, ssttt) => {
     data,
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       return [null, null];
     })
@@ -340,7 +341,7 @@ const sendRequestMail = (proxy, ifssp, xAppleWebToken, ssttt) => {
     data,
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       let emailAddress = null;
       let sstt = null;
@@ -376,7 +377,7 @@ const sendRequestChangePass = (proxy, url) => {
     },
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       return [null, null, null, null]
     })
@@ -435,7 +436,7 @@ const getRequestChangePass = (proxy, location, ifssp, xAppleWebToken) => {
     },
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       let xAppleWebToken = null;
       if (response?.headers?.['set-cookie']) {
@@ -516,7 +517,7 @@ const sendResetOption = (proxy, ifssp, xAppleWebToken, ssttt) => {
     data,
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       return [null, null, null]
     })
@@ -567,7 +568,7 @@ const getResetOption = (proxy, location, ifssp, xAppleWebToken, ssttt) => {
     },
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       let xAppleWebToken = null;
       let sstt = null;
@@ -621,7 +622,7 @@ const changePasswordReq = (proxy, password, ifssp, xAppleWebToken, ssttt) => {
     data,
     maxRedirects: 0
   };
-  return instance.request(options)
+  return legacyRequest(instance, options)
     .then(function (response) {
       if (response?.data?.resetCompleted) {
         return "successfully";

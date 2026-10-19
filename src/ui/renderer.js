@@ -6,6 +6,7 @@ let requesting = false;
 let exporting = false;
 const normalExportHelp = $('export-help').textContent;
 const normalModeNotice = $('mode-notice').textContent;
+const modeLabels = [...document.querySelectorAll('[data-list-text]')].map(element => ({ element, normal: element.textContent }));
 function selectedOptions() {
   return { mode: $('mode').value, retryFile: $('retryFile').value, emailFile: $('emailFile').value,
     aliasFile: $('aliasFile').value, proxyFile: $('proxyFile').value, outputRoot: $('outputRoot').value,
@@ -13,17 +14,31 @@ function selectedOptions() {
 }
 function updateMode() {
   const retry = $('mode').value === 'retry';
+  const listing = $('mode').value === 'list';
   $('normal-inputs').hidden = retry; $('retry-inputs').hidden = !retry;
-  $('mode-notice').textContent = retry
+  $('alias-input').hidden = listing;
+  for (const { element, normal } of modeLabels) element.textContent = listing ? element.dataset.listText : normal;
+  for (const element of document.querySelectorAll('[data-password-only]')) element.hidden = listing;
+  $('mode-notice').textContent = listing
+    ? 'Đăng nhập từng mail chính và lấy các alias đang có. Mỗi alias được lưu thành một dòng mail chính|password mail chính|alias. Tạm dừng chờ các mail chính đang xử lý hoàn tất và lưu kết quả.'
+    : retry
     ? 'Giữ đúng mail chính và alias của từng record. Mỗi mail chính đăng nhập một lần, kiểm tra alias đã có rồi tiếp tục nhận link và đổi pass; alias còn thiếu sẽ được thêm trước. Các luồng xử lý alias khác nhau. Tạm dừng chờ xử lý xong alias hiện tại, dọn dẹp và lưu kết quả.'
     : normalModeNotice;
-  $('start').textContent = retry ? 'Bắt đầu chạy lại record lỗi' : 'Bắt đầu đổi pass alias';
-  $('export-help').textContent = retry
+  $('start').textContent = listing ? 'Bắt đầu liệt kê alias' : retry ? 'Bắt đầu chạy lại record lỗi' : 'Bắt đầu đổi pass alias';
+  $('export-results').textContent = listing ? 'Mở file danh sách' : 'Xuất kết quả';
+  $('export-help').textContent = listing
+    ? 'Danh sách được tự động ghi nối tiếp vào mailchinh-alias.txt trong thư mục kết quả. Bấm Mở file danh sách để xem file đang có trong thư mục được chọn.'
+    : retry
     ? 'Xuất kết quả đọc các file TXT trong thư mục đang chọn rồi xóa record khỏi file lỗi đang chọn nếu alias đã thành công, không thêm được, hoặc mail chính đăng nhập lỗi. Dùng cả lịch sử các lượt cũ. Các record còn lại được giữ.'
     : normalExportHelp;
 }
 $('mode').addEventListener('change', updateMode);
 function resultPresentation(result) {
+  if (result.operation === 'list') {
+    if (result.status === 'listed') return { className: 'success', text: 'Đã liệt kê' };
+    if (result.status === 'empty') return { className: 'success', text: 'Không có alias' };
+    return { className: 'failure', text: 'Không hoàn tất' };
+  }
   if (result.exportStatus === 'success') return { className: 'success', text: 'Đổi pass thành công' };
   if (result.exportStatus === 'fail') return { className: 'failure', text: 'Không hoàn tất' };
   if (result.status === 'attention') return { className: 'failure', text: 'Cần xử lý' };
@@ -57,7 +72,6 @@ function update(snapshot) {
   $('start').disabled = busy || !!snapshot.pendingWrites;
   $('retry-writes').disabled = !snapshot.pendingWrites;
   $('export-results').disabled = busy;
-  $('export-results').textContent = 'Xuất kết quả';
   $('input-export-status').hidden = !snapshot.inputExportMessage;
   $('input-export-status').textContent = snapshot.inputExportMessage || '';
   $('main-failures').textContent = snapshot.loginFailed || 0;
@@ -72,7 +86,7 @@ function update(snapshot) {
   $('open-results').disabled = !snapshot.outputDir;
   $('status').textContent = ({ ready: 'Sẵn sàng', running: 'Đang xử lý', pausing: 'Đang tạm dừng', paused: 'Đã tạm dừng', completed: 'Hoàn tất', error: 'Có lỗi' })[snapshot.state];
   $('passwordChanged').textContent = snapshot.finalSuccess || 0;
-  $('linksFound').textContent = snapshot.linksFound || 0;
+  $('linksFound').textContent = (snapshot.mode === 'list' ? snapshot.aliasesFound : snapshot.linksFound) || 0;
   $('passwordFailed').textContent = snapshot.finalFailed || 0;
   $('inProgress').textContent = Math.max(0, (snapshot.attempted || 0) - (snapshot.finalSuccess || 0) - (snapshot.finalFailed || 0));
   $('attention').textContent = snapshot.attention || 0;
@@ -99,13 +113,15 @@ function update(snapshot) {
       if (snapshot.result.cleanupStatus === 'removed') detail.append(' · Alias đã được xóa khỏi mail chính.');
       else if (snapshot.result.cleanupStatus === 'error') detail.append(` · ${snapshot.result.cleanupMessage || 'Xóa alias thất bại.'}`);
     } else {
-      detail.textContent = (snapshot.result.exportStatus === 'fail' || snapshot.result.status === 'attention'
+      detail.textContent = (snapshot.result.operation === 'list' ? snapshot.result.message
+          : snapshot.result.exportStatus === 'fail' || snapshot.result.status === 'attention'
           ? (snapshot.result.cleanupStatus === 'error' ? snapshot.result.cleanupMessage : '') || snapshot.result.finalMessage || snapshot.result.passwordChangeMessage || snapshot.result.inboxMessage || snapshot.result.sendMessage || snapshot.result.message
+          : snapshot.result.cleanupStatus === 'removing' ? snapshot.result.cleanupMessage
           : snapshot.result.passwordChangeStatus === 'changing' ? snapshot.result.passwordChangeMessage
           : ['sending', 'retrying'].includes(snapshot.result.sendStatus) ? snapshot.result.sendMessage : '') || 'Đang cập nhật…';
       if (snapshot.result.exportMessage) {
         const label = document.createElement('span'); label.className = 'export-message';
-        label.dataset.file = snapshot.result.exportStatus === 'success' ? 'success.txt' : 'fail.txt';
+        label.dataset.file = snapshot.result.operation === 'list' ? 'mailchinh-alias.txt' : snapshot.result.exportStatus === 'success' ? 'success.txt' : 'fail.txt';
         label.textContent = snapshot.result.exportMessage;
         detail.append(' · ', label);
       }

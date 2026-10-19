@@ -2,6 +2,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { requireProxy } = require('./required-proxy');
 const DELETE_RETRY_STATUSES = new Set([401, 403, 407, 424]);
 const axios = require('axios');
+const { withDeadline } = require('./request-deadline');
 const cheerio = require('cheerio');
 const { CookieJar } = require('tough-cookie');
 const { randomUUID } = require('node:crypto');
@@ -93,29 +94,24 @@ class MailComAliasClient {
       // Axios socket timeout may not run while the proxy is still connecting.
       // Bound that wait too and forward cancellation of this mailbox session.
       const controller = new AbortController();
-      const cancel = () => controller.abort();
       const sessionSignal = ignoreCancel ? null : this.controller.signal;
-      sessionSignal?.addEventListener('abort', cancel, { once: true });
-      if (sessionSignal?.aborted) cancel();
-      const timer = setTimeout(cancel, timeout);
       try {
-        const cookie = await this.jar.getCookieString(current);
-        response = await this.request({ url: current, method, data,
-          headers: { Accept: 'text/html,application/json', 'Accept-Language': 'en-US,en;q=0.9',
-            'User-Agent': 'Mozilla/5.0', ...currentHeaders, ...(cookie ? { Cookie: cookie } : {}) },
-          // The agent performs CONNECT through the mandatory proxy. Disable Axios env proxy handling.
-          httpsAgent: this.agent, httpAgent: this.agent, proxy: false, timeout, signal: controller.signal, maxRedirects: 0,
-          maxContentLength: 5 * 1024 * 1024, maxBodyLength: 1024 * 1024, validateStatus: () => true });
+        response = await withDeadline(async () => {
+          const cookie = this.jar.getCookieStringSync(current);
+          return this.request({ url: current, method, data,
+            headers: { Accept: 'text/html,application/json', 'Accept-Language': 'en-US,en;q=0.9',
+              'User-Agent': 'Mozilla/5.0', ...currentHeaders, ...(cookie ? { Cookie: cookie } : {}) },
+            // The agent performs CONNECT through the mandatory proxy. Disable Axios env proxy handling.
+            httpsAgent: this.agent, httpAgent: this.agent, proxy: false, timeout, signal: controller.signal, maxRedirects: 0,
+            maxContentLength: 5 * 1024 * 1024, maxBodyLength: 1024 * 1024, validateStatus: () => true });
+        }, { timeout, signal: sessionSignal, cancel: () => controller.abort() });
       } catch {
         if (!ignoreCancel && this.cancelled) this.check();
         throw Object.assign(attention('Request qua proxy lỗi kết nối hoặc quá thời gian chờ. Không chuyển sang kết nối trực tiếp; chưa xác nhận kết quả.'), { retryable: true });
-      } finally {
-        clearTimeout(timer);
-        sessionSignal?.removeEventListener('abort', cancel);
       }
       if (response.status === 407) throw Object.assign(attention('Proxy từ chối xác thực (HTTP 407). Kiểm tra cấu hình proxy; không chuyển sang kết nối trực tiếp.'), { httpStatus: 407 });
       const cookies = response.headers?.['set-cookie'] || [];
-      for (const cookie of Array.isArray(cookies) ? cookies : [cookies]) await this.jar.setCookie(cookie, current, { ignoreError: true });
+      for (const cookie of Array.isArray(cookies) ? cookies : [cookies]) this.jar.setCookieSync(cookie, current, { ignoreError: true });
       if (![301, 302, 303, 307, 308].includes(response.status) || !redirects) return { ...response, url: current };
       if (!response.headers?.location) throw attention('Phản hồi chuyển hướng không có URL.');
       const target = new URL(response.headers.location, current);
@@ -194,6 +190,7 @@ class MailComAliasClient {
   async confirmAlias(alias, present) {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt) await this.sleep(2000);
+      this.report(`Xác nhận ${present ? 'thêm' : 'xóa'} alias (${attempt + 1}/3)…`);
       try {
         // Không lồng retry 3 x 3: tổng cộng tối đa 3 request xác nhận.
         const addresses = await this.listAddresses(true, 1);
@@ -264,6 +261,7 @@ class MailComAliasClient {
       let lastError;
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt && this.cancelled) break;
+        this.report(`Xóa alias bằng API (${attempt + 1}/3)…`);
         try {
           const response = await this.api(url, 'POST', undefined, 'text/plain;charset=UTF-8', true);
           this.requireSuccess(response, 'Xóa alias');
@@ -277,6 +275,7 @@ class MailComAliasClient {
         // gửi lần nữa; nếu không đối chiếu được thì chuyển sang xác nhận cuối.
         const deletionRejected = DELETE_RETRY_STATUSES.has(lastError?.httpStatus);
         let updated;
+        this.report('Đối chiếu danh sách sau request xóa alias…');
         try { updated = await this.listAddresses(true, 1); }
         catch (error) {
           lastError = error;
@@ -303,8 +302,18 @@ class MailComAliasClient {
     } finally { this.mutating = false; }
   }
   async close() {
-    try { if (this.logoutUrl) await this.http(this.logoutUrl, { ignoreCancel: true, redirects: false, timeout: 5000 }); } catch { /* Best effort logout; never expose response or credentials. */ }
-    finally { this.token = null; this.navsid = null; this.inbox?.clear(); this.logoutUrl = null; await this.jar.removeAllCookies(); this.controller.abort(); this.agent.destroy(); }
+    try {
+      this.report('Đang đóng phiên mail chính…');
+      if (this.logoutUrl) await this.http(this.logoutUrl, { ignoreCancel: true, redirects: false, timeout: 5000 });
+    } catch { /* Best effort logout; never expose response or credentials. */ }
+    finally {
+      try {
+        this.token = null; this.navsid = null; this.inbox?.clear(); this.logoutUrl = null;
+        this.jar.removeAllCookiesSync();
+      } finally {
+        this.controller.abort(); this.agent.destroy();
+      }
+    }
   }
   mailbox() {
     if (!this.inbox) this.inbox = new (require('./mailcom-inbox').MailComInbox)(this);

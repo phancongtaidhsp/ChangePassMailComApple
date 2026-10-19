@@ -25,6 +25,7 @@ function fixture(secondRequestError) {
       } };
       if (name === 'cheerio') return {};
       if (name === '../helper/helper') return {};
+      if (name === './request-deadline') return require('../src/services/request-deadline');
       throw new Error('Unexpected dependency');
     }
   }, { filename: 'apple.js' });

@@ -1,5 +1,5 @@
 // Chạy với Electron, dùng dữ liệu giả; không gọi API mail.com.
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, shell } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -203,12 +203,60 @@ async function run() {
   await waitFor('document.getElementById("input-export-status").textContent.includes("xóa 4 record")');
   assert.equal(fs.readFileSync(path.join(root, 'retry-input.txt'), 'utf8'), '');
   assert.equal(fs.readFileSync(path.join(root, 'main.txt'), 'utf8'), 'main2@mail.com|dummy-password2\n');
+  // Listing mode reads only the main credentials and never mutates addresses.
+  await evaluate('document.getElementById("mode").value = "list"; document.getElementById("mode").dispatchEvent(new Event("change"))');
+  assert.equal(await evaluate('document.getElementById("normal-inputs").hidden'), false);
+  assert.equal(await evaluate('document.getElementById("alias-input").hidden'), true);
+  assert.equal(await evaluate('document.getElementById("retry-inputs").hidden'), true);
+  assert.equal(await evaluate('document.getElementById("start").textContent'), 'Bắt đầu liệt kê alias');
+  assert.equal(await evaluate('document.getElementById("export-results").textContent'), 'Mở file danh sách');
+  await click('export-results');
+  await waitFor('document.getElementById("message").textContent.includes("Chưa có mailchinh-alias.txt")');
+  const listingSource = 'main2@mail.com|dummy-password2\nmain3@mail.com|dummy-password3\n';
+  fs.writeFileSync(path.join(root, 'main.txt'), listingSource);
+  await evaluate('document.getElementById("aliasFile").value = ""; document.getElementById("concurrency").value = "50"');
+  const listingLogins = [];
+  MailComAliasClient.prototype.login = async function (account) { this.mainEmail = account.email; listingLogins.push(account.email); };
+  MailComAliasClient.prototype.listAddresses = async function () {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    return [{ address: this.mainEmail }, ...(this.mainEmail === 'main2@mail.com'
+      ? Array.from({ length: 4 }, (_, index) => ({ address: `listed${index}@mail.com` })) : [])];
+  };
+  MailComAliasClient.prototype.addAlias = MailComAliasClient.prototype.removeAlias = async () => { throw new Error('Listing must not mutate aliases'); };
+  await click('start');
+  await waitFor('document.getElementById("status").textContent === "Đang xử lý"');
+  assert.equal(await evaluate('document.getElementById("concurrency").value'), '2');
+  assert.equal(await evaluate('document.getElementById("export-results").disabled'), true);
+  await waitFor('document.getElementById("status").textContent === "Hoàn tất"');
+  assert.equal(listingLogins.length, 2); assert.equal(new Set(listingLogins).size, 2);
+  assert.equal(await evaluate('document.getElementById("passwordChanged").textContent'), '2');
+  assert.equal(await evaluate('document.getElementById("linksFound").textContent'), '4');
+  assert.equal(await evaluate('document.getElementById("inProgress").textContent'), '0');
+  assert.equal(await evaluate('document.getElementById("passwordFailed").textContent'), '0');
+  assert.equal(await evaluate('document.querySelectorAll("#rows tr").length'), 5);
+  assert(await evaluate('document.getElementById("rows").textContent.includes("Không có alias")'));
+  assert.equal(fs.readFileSync(path.join(root, 'mailchinh-alias.txt'), 'utf8'),
+    Array.from({ length: 4 }, (_, index) => `main2@mail.com|dummy-password2|listed${index}@mail.com\n`).join(''));
+  assert(!await evaluate('document.body.textContent.includes("dummy-password")'));
+  const opened = [], originalOpenPath = shell.openPath;
+  shell.openPath = async file => { opened.push(file); return ''; };
+  try {
+    await click('export-results');
+    await waitFor('document.getElementById("input-export-status").textContent.includes("Đã mở mailchinh-alias.txt")');
+    assert.deepEqual(opened, [path.join(root, 'mailchinh-alias.txt')]);
+  } finally { shell.openPath = originalOpenPath; }
+  assert.equal(fs.readFileSync(path.join(root, 'main.txt'), 'utf8'), listingSource);
+  await evaluate('document.getElementById("mode").value = "normal"; document.getElementById("mode").dispatchEvent(new Event("change"))');
+  assert.equal(await evaluate('document.getElementById("alias-input").hidden'), false);
+  assert.equal(await evaluate('document.getElementById("export-results").textContent'), 'Xuất kết quả');
+  assert.equal(await evaluate('document.querySelector("h1").textContent'), 'Đổi mật khẩu Mail.com Alias');
+  await evaluate('document.getElementById("mode").value = "list"; document.getElementById("mode").dispatchEvent(new Event("change"))');
   assert.deepEqual(errors, []);
   assert.equal(BrowserWindow.getAllWindows().length, 1, 'Request mode must not open account browser windows');
   win.setSize(1160, 1020);
   await evaluate('window.scrollTo(0, 0)');
   await new Promise(resolve => setTimeout(resolve, 150));
-  const setupScreenshot = path.join(root, 'retry-setup.png');
+  const setupScreenshot = path.join(root, 'list-setup.png');
   fs.writeFileSync(setupScreenshot, (await win.webContents.capturePage()).toPNG());
   await evaluate('document.getElementById("results-title").scrollIntoView({ block: "start" })');
   await new Promise(resolve => setTimeout(resolve, 150));

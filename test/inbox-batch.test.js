@@ -230,7 +230,7 @@ async function run() {
     await cleanupResume.run(); assert.equal(cleanupResume.state, 'completed'); assert.equal(cleanupResume.pendingInbox.size, 0);
     assert.equal(cleanupSends, 1); assert.equal(cleanupReads, 1); assert.equal(cleanupCalls, 1);
     assert.equal(cleanupResume.results.get(0).cleanupStatus, 'error');
-    assert.equal(fs.readFileSync(cleanupResume.successFile, 'utf8'), 'main@mail.com|alias@mail.com|fixture-password\n');
+    assert.equal(fs.readFileSync(cleanupResume.successFile, 'utf8'), 'main@mail.com|secret|alias@mail.com|fixture-password\n');
     console.log('Inbox batch tests passed: five send calls, cleanup, and success despite cleanup failure');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }

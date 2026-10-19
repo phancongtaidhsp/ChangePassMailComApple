@@ -12,6 +12,8 @@ function lines(file) {
 }
 const validEmail = value => /^[a-z0-9][a-z0-9._-]*@[a-z0-9.-]+\.[a-z]{2,}$/i.test(value);
 function loadPlan(options) {
+  if (options.mode === 'retry') return loadRetryPlan(options);
+  if (options.mode && options.mode !== 'normal') throw new Error('Chế độ chạy không hợp lệ.');
   const accounts = [], seen = new Set();
   for (const [index, line] of lines(options.emailFile).entries()) {
     const separator = line.indexOf('|');
@@ -26,12 +28,42 @@ function loadPlan(options) {
   const aliases = [...new Set(raw)];
   if (!accounts.length || !aliases.length) throw new Error('Danh sách mail chính và mail phụ không được rỗng.');
   if (aliases.some(email => seen.has(email))) throw new Error('Mail phụ trùng với một mail chính trong danh sách.');
-  return { accounts, jobs: aliases.map((alias, i) => ({ alias, accountIndex: i })), duplicates: raw.length - aliases.length };
+  return { mode: 'normal', accounts, jobs: aliases.map((alias, i) => ({ alias, accountIndex: i })), duplicates: raw.length - aliases.length, skippedRecords: 0 };
+}
+
+function loadRetryPlan(options) {
+  const accounts = [], jobs = [], accountIndexes = new Map(), seenAliases = new Set();
+  let duplicates = 0, skippedRecords = 0;
+  for (const [index, line] of lines(options.retryFile).entries()) {
+    const parts = line.split('|');
+    const email = parts[0].trim().toLowerCase(), alias = (parts.at(-2) || '').trim().toLowerCase();
+    const password = parts.slice(1, -2).join('|'), sourceErrorCode = (parts.at(-1) || '').trim();
+    if (parts.length < 4 || !validEmail(email) || !password || !/^[a-z][a-z0-9_]*$/.test(sourceErrorCode)) {
+      throw new Error(`Record lỗi dòng ${index + 1}: cần mail chính|password mail chính|alias|mã lỗi.`);
+    }
+    // Lỗi ghi file/đóng phiên có thể không gắn với alias nào; không thể chạy đổi pass.
+    if (!alias) { skippedRecords++; continue; }
+    if (!validEmail(alias)) throw new Error(`Record lỗi dòng ${index + 1}: alias không hợp lệ.`);
+    let accountIndex = accountIndexes.get(email);
+    if (accountIndex === undefined) {
+      accountIndex = accounts.length; accountIndexes.set(email, accountIndex); accounts.push({ email, password });
+    } else if (accounts[accountIndex].password !== password) {
+      throw new Error(`Record lỗi dòng ${index + 1}: cùng mail chính có nhiều mật khẩu khác nhau.`);
+    }
+    if (seenAliases.has(alias)) { duplicates++; continue; }
+    seenAliases.add(alias); jobs.push({ alias, accountIndex, sourceErrorCode });
+  }
+  if (!jobs.length) throw new Error('File record lỗi không có alias hợp lệ để chạy lại.');
+  if (jobs.some(job => accountIndexes.has(job.alias))) throw new Error('Alias trong record lỗi trùng với mail chính.');
+  return { mode: 'retry', accounts, jobs, duplicates, skippedRecords };
 }
 
 class AliasBatch {
   constructor(options, { createClient, sendMail, changePassword, generatePassword = require('./helper/helper').generatePassword, onUpdate = () => { }, outputIO } = {}) {
     Object.assign(this, loadPlan(options));
+    this.retryQueues = this.mode === 'retry' ? this.accounts.map(() => []) : null;
+    this.retryPositions = this.accounts.map(() => 0);
+    if (this.retryQueues) this.jobs.forEach((job, index) => this.retryQueues[job.accountIndex].push(index));
     this.mainPasswords = new Map(this.accounts.map(account => [account.email, account.password]));
     // Giữ chuỗi đầu vào cho sendMail/changePassword; chỉ chuẩn hóa khi tạo client mail.com.
     this.proxies = loadProxies(options.proxyFile, { raw: true });
@@ -63,19 +95,19 @@ class AliasBatch {
     this.successFile = path.join(this.outputDir, 'success.txt');
     this.failFile = path.join(this.outputDir, 'fail.txt');
     this.mainFailFile = path.join(this.outputDir, 'mailchinhfail.txt');
-    const inputs = [options.emailFile, options.aliasFile, options.proxyFile].map(f => fs.realpathSync(f));
-    this.inputFiles = Object.freeze({ main: inputs[0], alias: inputs[1] });
+    const inputs = (this.mode === 'retry' ? [options.retryFile, options.proxyFile] : [options.emailFile, options.aliasFile, options.proxyFile]).map(f => fs.realpathSync(f));
+    this.inputFiles = Object.freeze(this.mode === 'retry' ? { retry: inputs[0] } : { main: inputs[0], alias: inputs[1] });
     this.inputExport = { done: false, aliasesRemoved: 0, mainsRemoved: 0 };
     this.inputExportMessage = '';
     const outputs = [this.resultFile, this.successFile, this.failFile, this.mainFailFile].map(file => fs.existsSync(file) ? fs.realpathSync(file) : file);
-    if (outputs.some(file => inputs.includes(file))) throw new Error('File kết quả trùng đầu vào.');
+    if (outputs.some((file, index) => inputs.includes(file) && !(this.mode === 'retry' && index === 2 && file === this.inputFiles.retry))) throw new Error('File kết quả trùng đầu vào.');
     this.writer = new ResultWriter(this.outputDir, outputIO);
     for (const file of [this.resultFile, this.successFile, this.failFile, this.mainFailFile]) this.writer.enqueue(file, '');
     this.writer.flush();
   }
   snapshot() {
     return {
-      state: this.state, message: this.message, total: this.jobs.length, completed: this.counts.added,
+      state: this.state, mode: this.mode, message: this.message, total: this.jobs.length, completed: this.counts.added,
       concurrency: this.concurrency, delayMs: this.delayMs,
       totalAccounts: this.accounts.length, fullAccounts: this.finishedAccounts.size,
       accountsNeedingAttention: this.accountErrors.size,
@@ -86,7 +118,7 @@ class AliasBatch {
       finalSuccess: this.finalCounts.success,
       finalFailed: this.finalCounts.failed,
       linksFound: this.finalCounts.linksFound,
-      duplicates: this.duplicates, ...this.counts, outputDir: this.outputDir,
+      duplicates: this.duplicates, skippedRecords: this.skippedRecords, ...this.counts, outputDir: this.outputDir,
       elapsedMs: this.elapsedMs + (this.startedAt ? Date.now() - this.startedAt : 0)
     };
   }
@@ -111,7 +143,7 @@ class AliasBatch {
     this.emit();
     return this.snapshot();
   }
-  exportInputFiles(options = { emailFile: this.inputFiles.main, aliasFile: this.inputFiles.alias, outputRoot: this.outputDir }) {
+  exportInputFiles(options = { mode: this.mode, retryFile: this.inputFiles.retry, emailFile: this.inputFiles.main, aliasFile: this.inputFiles.alias, outputRoot: this.outputDir }) {
     if (this.state !== 'completed') throw new Error('Chỉ xuất kết quả sau khi lượt chạy hoàn tất.');
     this.flushWrites();
     if (this.writer.pendingCount) throw new Error('Cần ghi hết kết quả TXT trước khi lọc file đầu vào. Bấm Thử ghi lại sau khi khắc phục lỗi ghi file.');
@@ -147,7 +179,7 @@ class AliasBatch {
   exportSuccess(record, password) {
     if (this.exported.has(record.jobId)) return;
     if (typeof password !== 'string' || !password) throw new Error('Không có mật khẩu mới để xuất kết quả thành công.');
-    const ticket = this.writeResult(this.successFile, `${record.mainEmail}|${record.alias}|${password}\n`, record);
+    const ticket = this.writeResult(this.successFile, `${record.mainEmail}|${this.mainPasswords.get(record.mainEmail) || ''}|${record.alias}|${password}\n`, record);
     this.exportTickets.set(record, ticket);
     this.exported.add(record.jobId);
     this.finalCounts.success++;
@@ -169,7 +201,7 @@ class AliasBatch {
     this.saveFollowup(record);
   }
   failureLine(record, code) {
-    // Mật khẩu mail chính chỉ đưa vào fail.txt, không gắn vào record/snapshot/JSONL.
+    // Mật khẩu mail chính chỉ đưa vào file TXT, không gắn vào record/snapshot/JSONL.
     return `${record.mainEmail}|${this.mainPasswords.get(record.mainEmail) || ''}|${record.alias || ''}|${code}\n`;
   }
   async sendVerification(record, pending, proxy) {
@@ -298,7 +330,7 @@ class AliasBatch {
     while ((record.passwordChangeAttempts || 0) < 5) {
       if (!this.processing()) {
         record.passwordChangeStatus = 'paused';
-        record.passwordChangeMessage = 'Đã tạm dừng đổi mật khẩu giả lập; Tiếp tục sẽ dùng link đã lấy.';
+        record.passwordChangeMessage = 'Đã tạm dừng đổi mật khẩu; Tiếp tục sẽ dùng link đã lấy.';
         this.saveFollowup(record);
         throw Object.assign(new Error('Đã tạm dừng.'), { code: 'CANCELLED', safeMessage: record.passwordChangeMessage });
       }
@@ -311,21 +343,21 @@ class AliasBatch {
       }
       record.passwordChangeAttempts = (record.passwordChangeAttempts || 0) + 1;
       record.passwordChangeStatus = 'changing';
-      record.passwordChangeMessage = `Đang đổi mật khẩu giả lập (${record.passwordChangeAttempts}/5)…`;
+      record.passwordChangeMessage = `Đang đổi mật khẩu (${record.passwordChangeAttempts}/5)…`;
       this.emit(record);
       let result;
       try { result = await this.changePassword(this.passwords.get(record), record.verificationLink, proxy); }
       catch { /* Lỗi gọi hàm cũng tính là một lần thất bại; không ghi dữ liệu nhạy cảm. */ }
       if (result === 'successfully') {
         record.passwordChangeStatus = 'successfully';
-        record.passwordChangeMessage = 'Đổi mật khẩu thành công (giả lập — không đổi mật khẩu thật).';
+        record.passwordChangeMessage = 'Đổi mật khẩu thành công.';
         this.saveFollowup(record);
         return true;
       }
       record.passwordChangeStatus = 'failed';
       record.passwordChangeMessage = record.passwordChangeAttempts === 5
-        ? 'Đổi mật khẩu giả lập thất bại sau 5 lần.'
-        : `Đổi mật khẩu giả lập chưa thành công (${record.passwordChangeAttempts}/5); thử lại sau 2 giây.`;
+        ? 'Đổi mật khẩu thất bại sau 5 lần.'
+        : `Đổi mật khẩu chưa thành công (${record.passwordChangeAttempts}/5); thử lại sau 2 giây.`;
       this.saveFollowup(record);
       if (record.passwordChangeAttempts < 5 && this.processing()) await this.wait(2000);
     }
@@ -336,10 +368,15 @@ class AliasBatch {
   claimAlias(accountIndex) {
     if (this.assignments.has(accountIndex)) return this.assignments.get(accountIndex);
     if (this.nextAlias >= this.jobs.length) return undefined;
-    const index = this.nextAlias++;
+    const index = this.retryQueues ? this.retryQueues[accountIndex][this.retryPositions[accountIndex]++] : this.nextAlias;
+    if (index === undefined) return undefined;
+    this.nextAlias++;
     this.jobs[index].accountIndex = accountIndex;
     this.assignments.set(accountIndex, index);
     return index;
+  }
+  hasWork(accountIndex) {
+    return this.retryQueues ? this.retryPositions[accountIndex] < this.retryQueues[accountIndex].length : this.nextAlias < this.jobs.length;
   }
   async processFollowup(accountIndex, client) {
     const pending = this.pendingInbox.get(accountIndex);
@@ -363,6 +400,8 @@ class AliasBatch {
     const record = {
       jobId: index, mainEmail: this.accounts[accountIndex].email, alias: this.jobs[index].alias,
       status: outcome.status, message: outcome.status === 'failed' ? `Không thể add mail phụ: ${outcome.message}` : outcome.message,
+      ...(outcome.aliasAlreadyPresent ? { aliasAlreadyPresent: true } : {}),
+      ...(this.jobs[index].sourceErrorCode ? { sourceErrorCode: this.jobs[index].sourceErrorCode } : {}),
       ...(outcome.status !== 'added' ? { errorCode: outcome.status === 'existing' ? 'alias_already_exists' : 'unable_add_alias' } : {}),
       ...(outcome.httpStatus ? { httpStatus: outcome.httpStatus } : {}), at: new Date().toISOString()
     };
@@ -396,7 +435,7 @@ class AliasBatch {
       while (this.state === 'running' && next < pending.length) {
         const accountIndex = pending[next++];
         let index = this.pendingInbox.get(accountIndex)?.record.jobId ?? this.assignments.get(accountIndex);
-        if (index === undefined && this.nextAlias >= this.jobs.length) continue;
+        if (index === undefined && !this.hasWork(accountIndex)) continue;
         let client, loggedIn = false, lastRecord;
         const proxy = requireProxy(this.proxies[accountIndex % this.proxies.length]);
         try {
@@ -412,7 +451,7 @@ class AliasBatch {
           if (this.pendingInbox.has(accountIndex)) {
             await this.processFollowup(accountIndex, client);
             index = undefined;
-            if (this.state === 'running' && this.nextAlias < this.jobs.length) await this.wait(this.delayMs, { idle: true });
+            if (this.state === 'running' && this.hasWork(accountIndex)) await this.wait(this.delayMs, { idle: true });
           }
           while (this.state === 'running') {
             if (index === undefined) index = this.claimAlias(accountIndex);
@@ -429,13 +468,20 @@ class AliasBatch {
                   : { status: 'failed', message: 'Chưa xác nhận tạo alias sau request trước. Không thử lại alias này.' };
               } else {
                 job.uncertain = true;
-                outcome = await client.addAlias(job.alias);
+                if (this.mode === 'retry') {
+                  const addresses = await client.listAddresses();
+                  if (addresses.some(address => address.address.toLowerCase() === job.alias)) outcome = { status: 'existing' };
+                }
+                outcome ||= await client.addAlias(job.alias);
+              }
+              if (this.mode === 'retry' && outcome.status === 'existing') {
+                outcome = { ...outcome, status: 'added', aliasAlreadyPresent: true, message: 'Alias đã có trong mail chính; tiếp tục nhận link và đổi pass.' };
               }
               const record = this.recordOutcome(index, accountIndex, outcome);
               lastRecord = record;
               job.uncertain = false;
               this.assignments.delete(accountIndex);
-              const done = outcome.accountFull === true;
+              const done = outcome.accountFull === true && this.mode !== 'retry';
               if (done) this.finishedAccounts.add(accountIndex);
               if (record.status !== 'added') this.exportFail(record, record.message);
               // Chỉ gửi khi đã xác nhận thêm mail phụ thành công.
@@ -451,7 +497,7 @@ class AliasBatch {
               lastRecord = this.results.get(index);
             }
             index = undefined;
-            if (this.state !== 'running' || this.nextAlias >= this.jobs.length) break;
+            if (this.state !== 'running' || !this.hasWork(accountIndex)) break;
             await this.wait(this.delayMs, { idle: true });
           }
         } catch (error) {
@@ -483,7 +529,7 @@ class AliasBatch {
     const manuallyPaused = this.state !== 'running';
     this.state = 'completed';
     this.message = manuallyPaused ? `Đã xử lý xong các alias đang chạy và tạm dừng. Còn ${this.jobs.length - this.nextAlias} alias chưa chạy. Có thể xuất kết quả hoặc bắt đầu lượt mới.`
-      : `Hoàn tất: đổi mật khẩu thành công ${this.finalCounts.success} alias, thất bại ${this.finalCounts.failed} alias; ${this.loginFailed.size} mail chính đăng nhập lỗi.${this.nextAlias === this.jobs.length ? ' Đã hết mail phụ trong file.' : ` Còn ${this.jobs.length - this.nextAlias} alias chưa chạy do đã hết mail chính có thể dùng.`}`;
+      : `Hoàn tất: đổi mật khẩu thành công ${this.finalCounts.success} alias, thất bại ${this.finalCounts.failed} alias; ${this.loginFailed.size} mail chính đăng nhập lỗi.${this.nextAlias === this.jobs.length ? (this.mode === 'retry' ? ' Đã hết record lỗi trong file.' : ' Đã hết mail phụ trong file.') : ` Còn ${this.jobs.length - this.nextAlias} alias chưa chạy do đã hết mail chính có thể dùng.`}`;
     this.writer.flush();
     this.emit();
     return this.snapshot();

@@ -20,6 +20,44 @@ npm start
 
 Bản đóng gói không kèm file tài khoản; chọn lại các file TXT trên máy.
 
+## Chế độ chạy lại record lỗi
+
+Chọn **Chế độ → Chạy lại record lỗi**, chọn file TXT có định dạng:
+
+```text
+mail chính|password mail chính|alias|mã lỗi
+```
+
+Sau đó chọn proxy, thư mục kết quả, số luồng và bấm **Bắt đầu chạy lại record lỗi**.
+Không cần chọn riêng file mail chính/mail phụ. Mật khẩu được giữ nguyên cả khoảng
+trắng và dấu `|`; alias và mã lỗi là hai trường cuối. File cũ thiếu password mail
+chính phải được bổ sung trước. Dòng lỗi không gắn alias được bỏ qua và hiển thị số
+lượng; các dòng sai định dạng hoặc mật khẩu mâu thuẫn cho cùng mail chính được báo
+lỗi trước khi bắt đầu. Alias trùng chỉ chạy một lần; nếu có ở nhiều mail chính thì
+giữ mail chính của record xuất hiện đầu tiên.
+
+Mỗi mail chính có hàng đợi riêng từ file record. Mỗi luồng đăng nhập một lần, giữ
+phiên/proxy và xử lý tuần tự các alias của mail đó; không chuyển alias sang mail
+chính khác. Trước mỗi alias, đọc danh sách địa chỉ:
+
+- Đã tồn tại: bỏ qua thao tác thêm và tiếp tục gửi thư, nhận link, đổi pass.
+- Chưa tồn tại: thêm alias rồi tiếp tục quy trình như bình thường. Nếu API thêm
+  trả về `existing` trong lúc đối chiếu thì vẫn tiếp tục đổi pass.
+
+Retry gửi thư/đọc Inbox/đổi pass/xóa alias và cơ chế dừng sau alias hiện tại giống
+chế độ thường. Mọi alias đã có hoặc vừa thêm đều được thử dọn dẹp trước khi kết thúc.
+Nếu gặp giới hạn tạo địa chỉ, record đó thất bại nhưng vẫn kiểm tra các record tiếp
+theo của cùng mail chính, vì chúng có thể đã tồn tại. Mail chính đăng nhập lỗi được
+ghi `mailchinhfail.txt`; các alias của mail đó còn chưa chạy được báo trong thống kê.
+
+Kết quả append vào `success.txt`, `fail.txt`, `mailchinhfail.txt` và JSONL với định
+dạng như chế độ thường. Có thể chọn chính `fail.txt` ở thư mục kết quả làm đầu vào:
+danh sách được nạp một lần lúc bắt đầu, các dòng mới append không bị chạy lại ngay.
+File record đầu vào chỉ được lọc khi bấm **Xuất kết quả**: xóa các record có alias
+đã thành công, có mã `unable_add_alias` trong kết quả, hoặc thuộc mail chính có mã
+`main_login_failed`; giữ các record còn lại. Việc lọc dùng các file TXT đã lưu, gồm
+cả lịch sử các lượt trước, và không tạo `.bak`.
+
 ## Proxy bắt buộc
 
 Không có chế độ non-proxy. File proxy phải tồn tại, có ít nhất một dòng hợp lệ.
@@ -153,7 +191,7 @@ chưa chạy. Chỉ yêu cầu Tạm dừng/đóng ứng dụng từ người d�
 Kết quả hiển thị rõ là giả lập và ghi `passwordChangeStatus`,
 `passwordChangeAttempts`, `passwordChangeMessage` vào JSONL. Mật khẩu mới chỉ giữ
 trong bộ nhớ và không đưa vào snapshot/log/JSONL. Khi đổi pass thành công, tool thử
-xóa alias rồi ghi `mail chính|alias|mật khẩu mới` vào `success.txt`; xóa alias lỗi vẫn
+xóa alias rồi ghi `mail chính|password mail chính|alias|mật khẩu mới` vào `success.txt`; xóa alias lỗi vẫn
 được tính là đổi pass thành công; lỗi dọn dẹp được ghi thêm vào `fail.txt` và JSONL. Nếu bước đổi pass kết thúc
 không thành công, tool ghi `mail chính|password mail chính|alias|mã lỗi` vào `fail.txt`. Tạm dừng vẫn chạy
 hết các lượt thử của alias hiện tại, dọn dẹp và xuất kết quả trước khi dừng.
@@ -209,22 +247,24 @@ có thể thay đổi.
 
 Cookie/token chỉ giữ trong bộ nhớ từng client, xóa sau khi đóng phiên. Chỉ gửi request
 tới HTTPS mail.com; không chuyển tiếp mật khẩu bằng redirect POST sang host khác.
-Không ghi cookie hoặc token vào kết quả. Mật khẩu mail chính chỉ được thêm vào `fail.txt`,
+Không ghi cookie hoặc token vào kết quả. Mật khẩu mail chính chỉ được thêm vào `success.txt` và `fail.txt`,
 không đưa vào bảng, snapshot hay JSONL. Khi gặp yêu cầu xác minh, 401/403/424
 hoặc giới hạn 429, ghi lỗi vào file tương ứng và tiếp tục lượt tiếp theo.
 Không tự mở browser hoặc vượt qua xác minh.
 
 ## Kết quả và tiếp tục
 
-`success.txt` ghi mỗi dòng `mail chính|alias|mật khẩu mới` khi `changePassword`
+`success.txt` ghi mỗi dòng `mail chính|password mail chính|alias|mật khẩu mới` khi `changePassword`
 trả đúng `successfully`, kể cả khi xóa alias thất bại. `fail.txt` ghi `mail chính|password mail chính|alias|mã lỗi` khi tạo alias,
 gửi thư, tìm link hoặc đổi pass kết thúc không thành công. Cả hai file ghi nối tiếp,
 quyền file là chỉ chủ máy đọc/ghi.
 
-Mật khẩu mail chính trong `fail.txt` lấy từ file tài khoản của lượt chạy, giữ nguyên
+Mật khẩu mail chính trong `success.txt` và `fail.txt` lấy từ file tài khoản của lượt chạy, giữ nguyên
 ký tự, khoảng trắng và dấu `|`. Mọi loại lỗi trong file này đều dùng định dạng mới,
 kể cả lỗi dọn dẹp, ghi file và đóng phiên. Nút Xuất kết quả đọc được cả dòng cũ
 `mail chính|alias|mã lỗi` và dòng mới; alias/mã lỗi được đọc từ hai cột cuối.
+Nút cũng đọc được định dạng `success.txt` cũ `mail chính|alias|mật khẩu mới` và định
+dạng mới có password mail chính. Với dòng mới, alias/mật khẩu mới là hai cột cuối.
 
 `mailchinhfail.txt` ghi `mail chính|main_login_failed` khi đăng nhập thất bại. Không ghi
 mật khẩu đăng nhập vào file này. Một mail chính chỉ được giao cho một worker tại
@@ -256,8 +296,9 @@ lọc đầu vào. Khi có kết quả:
 - Cập nhật file đầu vào, giữ nguyên nội dung, BOM và kiểu xuống dòng của các dòng còn lại.
 
 Không sửa đầu vào trong lúc chạy hoặc khi đang chờ dừng. Khi xuất, dùng đúng ba
-đường dẫn đang chọn: file mail chính, file mail phụ và thư mục kết quả. File TXT
-kết quả được giữ nguyên. File kết quả chưa tồn tại được xem là chưa có dữ liệu;
+đường dẫn đang chọn: file mail chính, file mail phụ và thư mục kết quả; ở chế độ
+chạy lại là file record lỗi và thư mục kết quả. File TXT kết quả được giữ nguyên
+trừ khi nó cũng là file record lỗi được chọn để lọc. File kết quả chưa tồn tại được xem là chưa có dữ liệu;
 dòng sai định dạng được bỏ qua và thông báo số dòng. Lỗi đọc file khác chặn lọc
 trước khi sửa đầu vào. Bấm xuất lại sẽ đọc lại kết quả mới trên đĩa; dòng đã xóa
 không bị đếm lại. Nếu cập nhật một file lỗi, có thể thử lại. Số dòng thông báo là
@@ -298,7 +339,18 @@ Thành công hoặc đã xác nhận alias không còn thì dừng ngay. Tạm d
 alias mới; các request và retry cần thiết cho alias hiện tại vẫn chạy đến kết quả cuối.
 
 Timeout mặc định là 20 giây/request, riêng danh sách Inbox là 32 giây và logout
-là 5 giây. Nếu POST tạo alias timeout hoặc chưa rõ kết quả, tool đối chiếu bằng GET;
+là 5 giây. Request Mail.com còn có thời hạn hủy bằng AbortController để giới hạn
+cả lúc proxy chưa kết nối xong. Các request phụ được `sendMail` gọi cũng có timeout
+20 giây. Đây là thời hạn từng request, không phải tổng thời gian một lần gọi
+`sendMail`: `getCaptchaResult` đọc kết quả tối đa 10 lượt, nghỉ 1 giây giữa các lượt
+chưa có kết quả; `getCaptchaResultNope` giữ giới hạn 120 lượt, nghỉ 2 giây. Vì thế
+toàn bộ bước gửi vẫn có thể kéo dài nhiều phút. `getCaptchaResult` hủy request
+khi hết 20 giây và trả chuỗi rỗng nếu thiếu ID, dữ liệu không hợp lệ, request lỗi
+hoặc hết lượt chờ. Các bước HTTP của Apple trả trực tiếp
+Promise của request để lỗi đọc dữ liệu/cookie/chuyển hướng được trả về cho vòng
+retry, không bị kẹt trong một Promise bọc ngoài.
+
+Nếu POST tạo alias timeout hoặc chưa rõ kết quả, tool đối chiếu bằng GET;
 nếu vẫn chưa xác nhận thì ghi thất bại, thử dọn dẹp alias đó và lấy alias tiếp theo.
 Không gửi lại request tạo alias đó. HTTP thành công riêng lẻ
 chưa đủ để báo `added`.

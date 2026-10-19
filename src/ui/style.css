@@ -20,11 +20,11 @@ h2 { font-size: 16px; margin: 0; }
 .field { display: grid; grid-template-columns: 145px 1fr; align-items: center; gap: 12px; margin-bottom: 12px; }
 label { font-size: 13px; font-weight: 550; }
 .file-row { gap: 8px; min-width: 0; }
-input { border: 1px solid #e0dce9; border-radius: 7px; background: #fcfbfe; color: #494055; padding: 10px 12px; font: inherit; min-width: 0; }
+input, select { border: 1px solid #e0dce9; border-radius: 7px; background: #fcfbfe; color: #494055; padding: 10px 12px; font: inherit; min-width: 0; }
 .file-row input { flex: 1; text-overflow: ellipsis; }
 input::placeholder { color: #9b94a5; }
 button { border: 1px solid transparent; border-radius: 7px; padding: 10px 15px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-button:focus-visible, input:focus-visible { outline: 3px solid #bdabeb; outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #bdabeb; outline-offset: 2px; }
 button:disabled { opacity: .45; cursor: default; }
 .primary { color: white; background: #6d43d8; box-shadow: 0 3px 7px #6d43d822; }
 .primary:hover:not(:disabled) { background: #5930c0; }

@@ -5,7 +5,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron-forge start",
-    "test": "node test/alias-api.test.js && node test/request-retry.test.js && node test/nonstop-batch.test.js && node test/alias-batch.test.js && node test/apple-verification-link.test.js && node test/mailcom-inbox.test.js && node test/inbox-batch.test.js && node test/password-change.test.js && node test/result-export.test.js && node test/graceful-pause.test.js",
+    "test": "node test/alias-api.test.js && node test/request-retry.test.js && node test/nonstop-batch.test.js && node test/alias-batch.test.js && node test/apple-verification-link.test.js && node test/mailcom-inbox.test.js && node test/inbox-batch.test.js && node test/password-change.test.js && node test/apple-password-settlement.test.js && node test/async-safety.test.js && node test/result-export.test.js && node test/graceful-pause.test.js && node test/retry-mode.test.js",
     "test:inbox:live": "node test/live-inbox.js",
     "test:alias:add:live": "node test/live-alias.js --create",
     "test:alias:delete:live": "node test/live-alias.js --delete",

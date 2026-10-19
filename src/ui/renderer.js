@@ -4,6 +4,25 @@ let current = { state: 'ready', elapsedMs: 0 };
 let tickAt = Date.now();
 let requesting = false;
 let exporting = false;
+const normalExportHelp = $('export-help').textContent;
+const normalModeNotice = $('mode-notice').textContent;
+function selectedOptions() {
+  return { mode: $('mode').value, retryFile: $('retryFile').value, emailFile: $('emailFile').value,
+    aliasFile: $('aliasFile').value, proxyFile: $('proxyFile').value, outputRoot: $('outputRoot').value,
+    concurrency: Number($('concurrency').value), delayMs: Number($('delayMs').value) };
+}
+function updateMode() {
+  const retry = $('mode').value === 'retry';
+  $('normal-inputs').hidden = retry; $('retry-inputs').hidden = !retry;
+  $('mode-notice').textContent = retry
+    ? 'Giữ đúng mail chính và alias của từng record. Mỗi mail chính đăng nhập một lần, kiểm tra alias đã có rồi tiếp tục nhận link và đổi pass; alias còn thiếu sẽ được thêm trước. Các luồng xử lý alias khác nhau. Tạm dừng chờ xử lý xong alias hiện tại, dọn dẹp và lưu kết quả.'
+    : normalModeNotice;
+  $('start').textContent = retry ? 'Bắt đầu chạy lại record lỗi' : 'Bắt đầu đổi pass alias';
+  $('export-help').textContent = retry
+    ? 'Xuất kết quả đọc các file TXT trong thư mục đang chọn rồi xóa record khỏi file lỗi đang chọn nếu alias đã thành công, không thêm được, hoặc mail chính đăng nhập lỗi. Dùng cả lịch sử các lượt cũ. Các record còn lại được giữ.'
+    : normalExportHelp;
+}
+$('mode').addEventListener('change', updateMode);
 function resultPresentation(result) {
   if (result.exportStatus === 'success') return { className: 'success', text: 'Đổi pass thành công' };
   if (result.exportStatus === 'fail') return { className: 'failure', text: 'Không hoàn tất' };
@@ -34,7 +53,7 @@ function update(snapshot) {
   const busy = ['running', 'pausing'].includes(snapshot.state);
   if (Number.isInteger(snapshot.concurrency)) $('concurrency').value = snapshot.concurrency;
   if (Number.isFinite(snapshot.delayMs)) $('delayMs').value = snapshot.delayMs;
-  for (const id of ['choose-email', 'choose-alias', 'choose-proxy', 'choose-output', 'concurrency', 'delayMs', 'start']) $(id).disabled = busy;
+  for (const id of ['mode', 'choose-retry', 'choose-email', 'choose-alias', 'choose-proxy', 'choose-output', 'concurrency', 'delayMs', 'start']) $(id).disabled = busy;
   $('start').disabled = busy || !!snapshot.pendingWrites;
   $('retry-writes').disabled = !snapshot.pendingWrites;
   $('export-results').disabled = busy;
@@ -48,7 +67,7 @@ function update(snapshot) {
   if (!snapshot.pendingWrites) {
     for (const label of document.querySelectorAll('.export-message')) label.textContent = `Đã ghi ${label.dataset.file}.`;
   }
-  $('start').textContent = 'Bắt đầu đổi pass alias';
+  updateMode();
   $('pause').disabled = snapshot.state !== 'running';
   $('open-results').disabled = !snapshot.outputDir;
   $('status').textContent = ({ ready: 'Sẵn sàng', running: 'Đang xử lý', pausing: 'Đang tạm dừng', paused: 'Đã tạm dừng', completed: 'Hoàn tất', error: 'Có lỗi' })[snapshot.state];
@@ -57,7 +76,7 @@ function update(snapshot) {
   $('passwordFailed').textContent = snapshot.finalFailed || 0;
   $('inProgress').textContent = Math.max(0, (snapshot.attempted || 0) - (snapshot.finalSuccess || 0) - (snapshot.finalFailed || 0));
   $('attention').textContent = snapshot.attention || 0;
-  $('duplicates').textContent = `${snapshot.duplicates || 0} email trùng được bỏ qua`;
+  $('duplicates').textContent = `${snapshot.duplicates || 0} email trùng được bỏ qua${snapshot.skippedRecords ? ` · ${snapshot.skippedRecords} dòng không có alias được bỏ qua` : ''}`;
   $('progress').max = snapshot.total || 1;
   $('progress').value = (snapshot.finalSuccess || 0) + (snapshot.finalFailed || 0);
   $('message').textContent = snapshot.message || 'Chọn danh sách email để bắt đầu.';
@@ -82,6 +101,7 @@ function update(snapshot) {
     } else {
       detail.textContent = (snapshot.result.exportStatus === 'fail' || snapshot.result.status === 'attention'
           ? (snapshot.result.cleanupStatus === 'error' ? snapshot.result.cleanupMessage : '') || snapshot.result.finalMessage || snapshot.result.passwordChangeMessage || snapshot.result.inboxMessage || snapshot.result.sendMessage || snapshot.result.message
+          : snapshot.result.passwordChangeStatus === 'changing' ? snapshot.result.passwordChangeMessage
           : ['sending', 'retrying'].includes(snapshot.result.sendStatus) ? snapshot.result.sendMessage : '') || 'Đang cập nhật…';
       if (snapshot.result.exportMessage) {
         const label = document.createElement('span'); label.className = 'export-message';
@@ -101,7 +121,7 @@ function renderTime() {
   $('elapsed').textContent = `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 }
 
-for (const [kind, field] of [['email', 'emailFile'], ['alias', 'aliasFile'], ['proxy', 'proxyFile'], ['output', 'outputRoot']]) {
+for (const [kind, field] of [['email', 'emailFile'], ['alias', 'aliasFile'], ['retry', 'retryFile'], ['proxy', 'proxyFile'], ['output', 'outputRoot']]) {
   $(`choose-${kind}`).addEventListener('click', async () => {
     try { const filename = await call(api.choose(kind)); if (filename) $(field).value = filename; }
     catch (error) { showError(error); }
@@ -114,8 +134,7 @@ $('start').addEventListener('click', async () => {
   try {
     // Xóa trước khi invoke để sự kiện kết quả nhanh không bị xóa sau đó.
     $('rows').replaceChildren();
-    await call(api.start({ emailFile: $('emailFile').value, aliasFile: $('aliasFile').value, proxyFile: $('proxyFile').value,
-      outputRoot: $('outputRoot').value, concurrency: Number($('concurrency').value), delayMs: Number($('delayMs').value) }));
+    await call(api.start(selectedOptions()));
   } catch (error) { $('rows').replaceChildren(...previous.childNodes); showError(error); }
   finally { requesting = false; }
 });
@@ -126,7 +145,7 @@ $('export-results').addEventListener('click', async () => {
   if (exporting) return;
   exporting = true;
   try {
-    const result = await call(api.exportResults({ emailFile: $('emailFile').value, aliasFile: $('aliasFile').value, outputRoot: $('outputRoot').value }));
+    const result = await call(api.exportResults(selectedOptions()));
     if (result?.message) {
       $('input-export-status').hidden = false;
       $('input-export-status').textContent = result.message;

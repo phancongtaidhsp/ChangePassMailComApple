@@ -34,7 +34,7 @@ async function run() {
       assert.equal(changes, Math.min(succeedsAt, 5)); assert.equal(generated, 1); assert.equal(removed, 1);
       assert.deepEqual(waits, Array(changes - 1).fill(2000));
       assert.equal(fs.readFileSync(batch.failFile, 'utf8'), succeedsAt === Infinity ? 'main@mail.com|secret|alias@mail.com|password_change_failed\n' : '');
-      assert.equal(fs.readFileSync(batch.successFile, 'utf8'), succeedsAt === Infinity ? '' : 'main@mail.com|alias@mail.com|new-password\n');
+      assert.equal(fs.readFileSync(batch.successFile, 'utf8'), succeedsAt === Infinity ? '' : 'main@mail.com|secret|alias@mail.com|new-password\n');
       assert(!fs.readFileSync(batch.resultFile, 'utf8').includes('new-password'));
     }
     console.log('Password change tests passed: retry budget, stable password/raw proxy, cleanup and failure codes');

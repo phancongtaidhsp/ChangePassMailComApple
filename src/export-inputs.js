@@ -5,13 +5,17 @@ const validEmail = value => /^[a-z0-9][a-z0-9._-]*@[a-z0-9.-]+\.[a-z]{2,}$/i.tes
 
 function exportResultsFromFiles(options, { io = fs } = {}) {
   if (!options || typeof options.outputRoot !== 'string' || !options.outputRoot.trim()) throw new Error('Hãy chọn thư mục kết quả chứa success.txt, fail.txt và mailchinhfail.txt.');
-  if (typeof options.emailFile !== 'string' || !options.emailFile.trim() || typeof options.aliasFile !== 'string' || !options.aliasFile.trim()) throw new Error('Hãy chọn file mail chính và mail phụ cần lọc.');
+  const retryMode = options.mode === 'retry';
+  if (retryMode) {
+    if (typeof options.retryFile !== 'string' || !options.retryFile.trim()) throw new Error('Hãy chọn file record lỗi cần lọc.');
+  } else if (typeof options.emailFile !== 'string' || !options.emailFile.trim() || typeof options.aliasFile !== 'string' || !options.aliasFile.trim()) throw new Error('Hãy chọn file mail chính và mail phụ cần lọc.');
   let mainFile, aliasFile, outputDir;
   try {
-    mainFile = io.realpathSync(options.emailFile); aliasFile = io.realpathSync(options.aliasFile);
+    if (retryMode) aliasFile = io.realpathSync(options.retryFile);
+    else { mainFile = io.realpathSync(options.emailFile); aliasFile = io.realpathSync(options.aliasFile); }
     outputDir = io.realpathSync(options.outputRoot);
-    if (!io.statSync(mainFile).isFile() || !io.statSync(aliasFile).isFile() || !io.statSync(outputDir).isDirectory()) throw new Error();
-  } catch { throw new Error('Kiểm tra lại file mail chính, mail phụ và thư mục kết quả đang chọn.'); }
+    if (mainFile && !io.statSync(mainFile).isFile() || !io.statSync(aliasFile).isFile() || !io.statSync(outputDir).isDirectory()) throw new Error();
+  } catch { throw new Error(retryMode ? 'Kiểm tra lại file record lỗi và thư mục kết quả đang chọn.' : 'Kiểm tra lại file mail chính, mail phụ và thư mục kết quả đang chọn.'); }
   if (mainFile === aliasFile) throw new Error('File mail chính và mail phụ không được trùng nhau.');
   const aliases = new Set(), mains = new Set();
   let filesRead = 0, skippedRecords = 0;
@@ -20,7 +24,7 @@ function exportResultsFromFiles(options, { io = fs } = {}) {
     const file = path.join(outputDir, name);
     let content;
     try {
-      if ([mainFile, aliasFile].includes(io.realpathSync(file))) throw Object.assign(new Error(), { code: 'INPUT_CONFLICT' });
+      if ([mainFile, aliasFile].includes(io.realpathSync(file)) && !(retryMode && name === 'fail.txt')) throw Object.assign(new Error(), { code: 'INPUT_CONFLICT' });
       content = io.readFileSync(file, 'utf8'); filesRead++;
     } catch (error) {
       if (error.code === 'ENOENT') continue;
@@ -42,23 +46,27 @@ function exportResultsFromFiles(options, { io = fs } = {}) {
         if (parts.length < 3 || !validEmail(main) || !validEmail(alias) || !code) { skippedRecords++; continue; }
         if (code === 'unable_add_alias') aliases.add(alias);
       } else {
-        const alias = (parts[1] || '').trim().toLowerCase();
-        if (parts.length < 3 || !validEmail(main) || !validEmail(alias) || !parts.slice(2).join('|').trim()) { skippedRecords++; continue; }
+        // Dòng mới: main|password (có thể chứa |)|alias|password mới.
+        // Dòng cũ: main|alias|password mới (giữ hỗ trợ cả password cũ chứa |).
+        const newFormat = parts.length >= 4 && validEmail(parts.at(-2).trim());
+        const alias = (newFormat ? parts.at(-2) : parts[1] || '').trim().toLowerCase();
+        const password = newFormat ? parts.at(-1) : parts.slice(2).join('|');
+        if (parts.length < 3 || !validEmail(main) || !validEmail(alias) || !password.trim()) { skippedRecords++; continue; }
         aliases.add(alias);
       }
     }
   }
-  const aliasesRemoved = removeInputRows(aliasFile, aliases, { io }).removed;
-  const mainsRemoved = removeInputRows(mainFile, mains, { account: true, io }).removed;
+  const aliasesRemoved = removeInputRows(aliasFile, aliases, { io, retryRecords: retryMode, failedMains: mains }).removed;
+  const mainsRemoved = retryMode ? 0 : removeInputRows(mainFile, mains, { account: true, io }).removed;
   const message = filesRead
-    ? `Đã xuất kết quả từ file TXT: xóa ${aliasesRemoved} dòng alias và ${mainsRemoved} dòng mail chính khỏi file đang chọn.${skippedRecords ? ` Bỏ qua ${skippedRecords} dòng kết quả không hợp lệ.` : ''}`
+    ? `Đã xuất kết quả từ file TXT: ${retryMode ? `xóa ${aliasesRemoved} record khỏi file lỗi đang chọn` : `xóa ${aliasesRemoved} dòng alias và ${mainsRemoved} dòng mail chính khỏi file đang chọn`}.${skippedRecords ? ` Bỏ qua ${skippedRecords} dòng kết quả không hợp lệ.` : ''}`
     : 'Chưa có file kết quả TXT trong thư mục đang chọn. File đầu vào được giữ nguyên.';
   return { done: true, aliasesRemoved, mainsRemoved, filesRead, skippedRecords, message };
 }
 
 // Giữ nguyên BOM, nội dung từng dòng và kiểu xuống dòng của phần được giữ lại.
-function removeInputRows(file, emails, { account = false, io = fs } = {}) {
-  if (!emails.size) return { removed: 0 };
+function removeInputRows(file, emails, { account = false, io = fs, retryRecords = false, failedMains = new Set() } = {}) {
+  if (!emails.size && (!retryRecords || !failedMains.size)) return { removed: 0 };
   let temporary;
   try {
     const original = io.readFileSync(file, 'utf8');
@@ -67,6 +75,14 @@ function removeInputRows(file, emails, { account = false, io = fs } = {}) {
     let removed = 0;
     const remaining = rows.filter(row => {
       const value = row.replace(/[\r\n]+$/, '');
+      if (retryRecords) {
+        const parts = value.split('|');
+        if (parts.length < 4) return true;
+        const main = parts[0].trim().toLowerCase(), alias = parts.at(-2).trim().toLowerCase();
+        if (!validEmail(main) || !validEmail(alias) || !/^[a-z][a-z0-9_]*$/.test(parts.at(-1).trim())) return true;
+        if (!emails.has(alias) && !failedMains.has(main)) return true;
+        removed++; return false;
+      }
       const email = (account ? value.split('|', 1)[0] : value).trim().toLowerCase();
       if (!email || !emails.has(email)) return true;
       removed++; return false;

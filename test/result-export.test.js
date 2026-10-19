@@ -101,7 +101,7 @@ async function run() {
     const missing = exportResultsFromFiles(offline);
     assert.equal(missing.filesRead, 0); assert.equal(missing.aliasesRemoved, 0);
     assert.equal(fs.readFileSync(offline.aliasFile, 'utf8'), offlineAlias);
-    fs.writeFileSync(path.join(offlineDir, 'success.txt'), '\uFEFFold@mail.com|success@mail.com|password|with-pipe\r\ninvalid line\nold@mail.com|keep@mail.com|\n');
+    fs.writeFileSync(path.join(offlineDir, 'success.txt'), '\uFEFFold@mail.com|success@mail.com|password|with-pipe\r\nold@mail.com| secret|with-pipe |success@mail.com|new-password\nold@mail.com|keep@mail.com|success@mail.com|new-password\ninvalid line\nold@mail.com|keep@mail.com|\n');
     fs.writeFileSync(path.join(offlineDir, 'fail.txt'), 'old@mail.com|rejected@mail.com|unable_add_alias\nold@mail.com| secret|with-pipe |rejected@mail.com|unable_add_alias\nold@mail.com|secret|keep@mail.com|inbox_read_failed\nold@mail.com|secret|cleanup@mail.com|alias_cleanup_failed\nold@mail.com|secret||result_write_failed\n');
     fs.writeFileSync(path.join(offlineDir, 'mailchinhfail.txt'), ' BAD@mail.com |main_login_failed\nkeep@mail.com|some_other_error\ninvalid\n');
     const sources = ['success.txt', 'fail.txt', 'mailchinhfail.txt'].map(name => fs.readFileSync(path.join(offlineDir, name), 'utf8'));
@@ -123,7 +123,7 @@ async function run() {
     // Existing batch export also honors explicitly selected file paths.
     fs.writeFileSync(offline.aliasFile, 'success@mail.com\n');
     assert.equal(batch.exportInputFiles(offline).aliasesRemoved, 1);
-    // Preserve the main password exactly, including spaces and pipes, only in fail.txt.
+    // Preserve the main password exactly, including spaces and pipes, only in result TXT files.
     fs.writeFileSync(offline.emailFile, 'main@mail.com| secret|with-pipe \n');
     fs.writeFileSync(offline.aliasFile, 'rejected@mail.com\n');
     const updates = [];
@@ -139,6 +139,23 @@ async function run() {
     assert(!JSON.stringify(updates).includes('with-pipe'));
     assert(!fs.readFileSync(passwordBatch.resultFile, 'utf8').includes('with-pipe'));
     assert.equal(passwordBatch.exportInputFiles().aliasesRemoved, 1);
+    fs.writeFileSync(offline.aliasFile, 'success@mail.com\nkeep@mail.com\n');
+    const successUpdates = [];
+    const successBatch = new AliasBatch({ ...offline, proxyFile: options.proxyFile, outputRoot: path.join(root, 'password-success') }, {
+      sendMail: async () => 'successfully', changePassword: async () => 'successfully', generatePassword: () => 'new-password',
+      createClient: () => ({ login: async () => {}, close: async () => {},
+        addAlias: async alias => ({ status: alias === 'success@mail.com' ? 'added' : 'existing' }),
+        waitForAppleVerification: async () => ({ status: 'found', link: 'https://iforgot.apple.com/verify/email?key=fixture' }),
+        removeAlias: async () => ({ status: 'removed' })
+      }), onUpdate: update => successUpdates.push(update)
+    });
+    successBatch.wait = async () => {};
+    await successBatch.run();
+    assert.equal(fs.readFileSync(successBatch.successFile, 'utf8'), 'main@mail.com| secret|with-pipe |success@mail.com|new-password\n');
+    assert(!JSON.stringify(successUpdates).includes('with-pipe'));
+    assert(!fs.readFileSync(successBatch.resultFile, 'utf8').includes('with-pipe'));
+    assert.equal(successBatch.exportInputFiles().aliasesRemoved, 1);
+    assert.equal(fs.readFileSync(offline.aliasFile, 'utf8'), 'keep@mail.com\n');
     console.log('Result export tests passed: disk source, historical results, offline/current selection, no backups, partial failure, malformed rows and repeated reads');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }

@@ -15,17 +15,23 @@
       <span class="status" id="status">Sẵn sàng</span>
     </header>
     <p class="intro">Thêm alias, nhận link Apple trong Inbox và đổi mật khẩu cho từng alias qua link nhận được.</p>
-    <p class="muted">Gửi thư đang ở chế độ giả lập: sau khi thêm alias thành công, chờ 0,5 giây rồi báo gửi thành công, không gửi thư thật. Đăng nhập và thêm alias vẫn chạy thật qua proxy.</p>
-    <div class="notice"><strong>Mỗi luồng giữ một mail chính, xử lý nhiều alias</strong><p>Đăng nhập một lần, xử lý tuần tự alias trong cùng phiên cho đến khi mail.com báo “Maximum number of email addresses created”, rồi chuyển sang mail chính tiếp theo. Alias được cấp duy nhất từ hàng đợi chung. Tạm dừng ngừng nhận alias mới; mỗi luồng xử lý hết alias hiện tại, xóa alias và lưu kết quả trước khi dừng.</p></div>
+    <div class="notice"><strong>Mỗi luồng giữ một mail chính, xử lý nhiều alias</strong><p id="mode-notice">Đăng nhập một lần, xử lý tuần tự alias trong cùng phiên cho đến khi mail.com báo “Maximum number of email addresses created”, rồi chuyển sang mail chính tiếp theo. Alias được cấp duy nhất từ hàng đợi chung. Tạm dừng ngừng nhận alias mới; mỗi luồng xử lý hết alias hiện tại, xóa alias và lưu kết quả trước khi dừng.</p></div>
     <section class="panel" aria-labelledby="setup-title">
       <div class="section-heading"><h2 id="setup-title">Danh sách & cấu hình</h2><span>TXT · Mail chính + mail phụ</span></div>
+      <div class="field"><label for="mode">Chế độ</label><select id="mode"><option value="normal">Chạy bình thường</option><option value="retry">Chạy lại record lỗi</option></select></div>
+      <div id="normal-inputs">
       <div class="field"><label for="emailFile">Mail chính</label><div class="file-row"><input id="emailFile" readonly placeholder="Chưa chọn file mail chính"><button id="choose-email" class="secondary">Chọn file</button></div></div>
       <div class="field"><label for="aliasFile">Mail phụ cần thêm</label><div class="file-row"><input id="aliasFile" readonly placeholder="Chưa chọn file mail phụ"><button id="choose-alias" class="secondary">Chọn file</button></div></div>
+      </div>
+      <div id="retry-inputs" hidden>
+        <div class="field"><label for="retryFile">Record cần chạy lại</label><div class="file-row"><input id="retryFile" readonly placeholder="Chưa chọn file fail.txt"><button id="choose-retry" class="secondary">Chọn file</button></div></div>
+        <p class="muted">Mỗi dòng: mail chính|password mail chính|alias|mã lỗi. Mỗi luồng giữ một mail chính và xử lý các alias thuộc mail đó. Nếu alias đã có thì tiếp tục nhận link, đổi pass; nếu chưa có thì thêm trước. Alias trùng chỉ chạy một lần; dòng không có alias được bỏ qua.</p>
+      </div>
       <div class="field"><label for="proxyFile">Proxy (bắt buộc)</label><div class="file-row"><input id="proxyFile" readonly placeholder="Chưa chọn file proxy"><button id="choose-proxy" class="secondary">Chọn file</button></div></div>
       <p class="muted">Mọi request mail.com đi qua proxy. Mail chính đăng nhập lỗi được ghi vào mailchinhfail.txt và thay bằng tài khoản khác. Các lỗi sau đăng nhập ghi fail.txt rồi chạy alias tiếp theo, không tự dừng luồng.</p>
       <p class="muted">Gửi thư tối đa 5 lần, nghỉ 2 giây giữa các lần. Nếu gửi lỗi hoặc chưa tìm thấy link thì thử lần tiếp theo; tìm thấy link thì dừng gửi. Sau khi thêm alias thành công, mọi nhánh kết thúc đều thử xóa alias.</p>
       <div class="field"><label for="outputRoot">Thư mục kết quả</label><div class="file-row"><input id="outputRoot" readonly placeholder="Chưa chọn thư mục kết quả"><button id="choose-output" class="secondary">Chọn thư mục</button></div></div>
-      <p class="muted">success.txt ghi mail chính|alias|mật khẩu mới. fail.txt ghi mail chính|password mail chính|alias|mã lỗi (ví dụ unable_add_alias). mailchinhfail.txt ghi mail chính|mã lỗi. Bảng và JSONL giữ mô tả lỗi chi tiết.</p>
+      <p class="muted">success.txt ghi mail chính|password mail chính|alias|mật khẩu mới. fail.txt ghi mail chính|password mail chính|alias|mã lỗi (ví dụ unable_add_alias). mailchinhfail.txt ghi mail chính|mã lỗi. Bảng và JSONL giữ mô tả lỗi chi tiết.</p>
       <div class="controls"><div class="settings"><label for="concurrency">Số luồng <input id="concurrency" type="number" min="1" max="200" value="50"></label><label for="delayMs">Nghỉ mỗi luồng (ms) <input id="delayMs" type="number" min="1000" max="60000" step="500" value="1000"></label></div><div class="actions"><button id="pause" class="secondary" disabled>Tạm dừng</button><button id="start" class="primary">Bắt đầu đổi pass alias</button></div></div>
     </section>
     <section class="stats" aria-label="Thống kê">
@@ -36,7 +42,7 @@
     </section>
     <section class="panel results" aria-labelledby="results-title">
       <div class="section-heading"><h2 id="results-title">Kết quả xử lý</h2><div class="actions"><button id="retry-writes" class="secondary" disabled>Thử ghi lại</button><button id="open-results" class="secondary" disabled>Mở thư mục kết quả ↗</button><button id="export-results" class="primary">Xuất kết quả</button></div></div>
-      <p class="muted">Xuất kết quả đọc success.txt, fail.txt và mailchinhfail.txt trong thư mục kết quả đang chọn: xóa alias thành công hoặc có mã unable_add_alias khỏi file mail phụ, và mail chính có mã main_login_failed khỏi file mail chính đang chọn. Dùng cả kết quả các lượt cũ, kể cả sau khi mở lại tool. Các dòng còn lại được giữ.</p>
+      <p class="muted" id="export-help">Xuất kết quả đọc success.txt, fail.txt và mailchinhfail.txt trong thư mục kết quả đang chọn: xóa alias thành công hoặc có mã unable_add_alias khỏi file mail phụ, và mail chính có mã main_login_failed khỏi file mail chính đang chọn. Dùng cả kết quả các lượt cũ, kể cả sau khi mở lại tool. Các dòng còn lại được giữ.</p>
       <p id="input-export-status" role="status" class="muted" hidden></p>
       <p class="muted">Sau mỗi lần gửi thành công, Inbox được quét tối đa 5 lượt, cách nhau 2 giây. Chưa có link thì gửi tiếp trong giới hạn 5 lần; có link thì đổi pass, sau đó xóa alias khỏi mail chính trước khi hoàn tất.</p>
       <p class="muted">Mail chính đăng nhập lỗi: <strong id="main-failures">0</strong> · Alias chưa xác nhận: <strong id="attention">0</strong>. Xem trạng thái cuối và mật khẩu mới (nếu thành công) trong bảng.</p>

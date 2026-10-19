@@ -253,9 +253,20 @@ const markAsDoneDaisySMS = async (apiKey, idDaisySMS) => {
   })
 }
 
+// Bound the entire request, including connection setup, and cancel it on expiry.
+const requestCaptcha = async (options) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    return await instanceDefault.request({ ...options, timeout: 20000, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const getCaptchaId = async (apiKey, imageData) => {
-  const FormData = require('form-data');
-  return new Promise((resolve) => {
+  try {
+    const FormData = require('form-data');
     let data = new FormData();
     data.append('method', 'base64');
     data.append('key', apiKey);
@@ -272,33 +283,38 @@ const getCaptchaId = async (apiKey, imageData) => {
       },
       data: data
     };
-    instanceDefault.request(options)
-      .then(function (response) {
-        resolve(response.data.split('|')?.[1]);
-      }).catch((e) => {
-        resolve('');
-      });
-  })
+    const response = await requestCaptcha(options);
+    const body = typeof response?.data === 'string' ? response.data.trim() : '';
+    return body.startsWith('OK|') ? body.split('|')[1].trim() : '';
+  } catch {
+    return '';
+  }
 }
 
 const getCaptchaResult = async (apiKey, imageData) => {
-  let idCapt = await getCaptchaId(apiKey, imageData);
-  for (let i = 0; i < 10; i++) {
-    let options = {
-      method: 'get',
-      maxBodyLength: Infinity,
-      url: `http://127.0.0.1:80/res.php?key=${apiKey}&action=get&id=${idCapt}`,
-      headers: {}
-    };
-    let res = await instanceDefault.request(options);
-    if (res.data.includes('CAPCHA_NOT_READY')) {
-      await delay(1000);
-    } else if (res.data.includes('ERROR_CAPTCHA_UNSOLVABLE')) {
-      return '';
-    } else {
-      return res.data.split('|')?.[1];
+  try {
+    const idCapt = await getCaptchaId(apiKey, imageData);
+    if (!idCapt) return '';
+    for (let i = 0; i < 10; i++) {
+      const options = {
+        method: 'get',
+        maxBodyLength: Infinity,
+        url: `http://127.0.0.1:80/res.php?key=${apiKey}&action=get&id=${idCapt}`,
+        headers: {}
+      };
+      const res = await requestCaptcha(options);
+      const body = typeof res?.data === 'string' ? res.data.trim() : null;
+      if (typeof body !== 'string') return '';
+      if (body === 'CAPCHA_NOT_READY') {
+        if (i < 9) await delay(1000);
+      } else {
+        return body.startsWith('OK|') ? body.split('|')[1].trim() : '';
+      }
     }
+  } catch {
+    return '';
   }
+  return '';
 }
 
 const generatePassword = () => {
@@ -352,6 +368,7 @@ const getProcessCaptcha = (proxy, apiKey, imageData) => {
       method: 'post',
       maxBodyLength: Infinity,
       url: 'https://api.nopecha.com/',
+      timeout: 20000,
       headers: {
         'Content-Type': 'application/json',
         'user_agent': 'NopeCHA NodeBindings',
@@ -406,6 +423,7 @@ const getCaptchaResultNope = async (proxy, apiKey, imageData) => {
         method: 'get',
         maxBodyLength: Infinity,
         url: `https://api.nopecha.com?key=${apiKey}&id=${idCaptcha}`,
+        timeout: 20000,
         headers: {
           'Content-Type': 'application/json',
           'user_agent': 'NopeCHA NodeBindings',

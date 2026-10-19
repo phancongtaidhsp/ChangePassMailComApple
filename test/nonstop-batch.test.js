@@ -95,7 +95,7 @@ async function run() {
       assert(!JSON.stringify(b.snapshot()).includes('generated-secret'));
       blocked = false; b.flushWrites();
       assert.equal(b.snapshot().pendingWrites, 0); assert.equal(b.snapshot().writeError, '');
-      assert.equal(fs.readFileSync(b.successFile, 'utf8'), `main0@mail.com|${aliases[0]}|generated-secret\n`);
+      assert.equal(fs.readFileSync(b.successFile, 'utf8'), `main0@mail.com|login-secret|${aliases[0]}|generated-secret\n`);
       assert(fs.readFileSync(b.failFile, 'utf8').includes('|result_write_failed\n'));
       const saved = fs.readFileSync(b.successFile, 'utf8'); b.flushWrites();
       assert.equal(fs.readFileSync(b.successFile, 'utf8'), saved);

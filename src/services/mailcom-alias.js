@@ -86,11 +86,18 @@ class MailComAliasClient {
   }
   async http(url, { method = 'GET', data, headers = {}, ignoreCancel = false, redirects = true, timeout = 20000 } = {}) {
     if (!ignoreCancel) this.check();
-    const controller = ignoreCancel ? new AbortController() : this.controller;
     let current = url, currentHeaders = { ...headers };
     for (let hop = 0; hop <= 8; hop++) {
       if (!trusted(current)) throw attention('Đã chặn URL chuyển hướng ngoài HTTPS mail.com.');
       let response;
+      // Axios socket timeout may not run while the proxy is still connecting.
+      // Bound that wait too and forward cancellation of this mailbox session.
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      const sessionSignal = ignoreCancel ? null : this.controller.signal;
+      sessionSignal?.addEventListener('abort', cancel, { once: true });
+      if (sessionSignal?.aborted) cancel();
+      const timer = setTimeout(cancel, timeout);
       try {
         const cookie = await this.jar.getCookieString(current);
         response = await this.request({ url: current, method, data,
@@ -102,6 +109,9 @@ class MailComAliasClient {
       } catch {
         if (!ignoreCancel && this.cancelled) this.check();
         throw Object.assign(attention('Request qua proxy lỗi kết nối hoặc quá thời gian chờ. Không chuyển sang kết nối trực tiếp; chưa xác nhận kết quả.'), { retryable: true });
+      } finally {
+        clearTimeout(timer);
+        sessionSignal?.removeEventListener('abort', cancel);
       }
       if (response.status === 407) throw Object.assign(attention('Proxy từ chối xác thực (HTTP 407). Kiểm tra cấu hình proxy; không chuyển sang kết nối trực tiếp.'), { httpStatus: 407 });
       const cookies = response.headers?.['set-cookie'] || [];

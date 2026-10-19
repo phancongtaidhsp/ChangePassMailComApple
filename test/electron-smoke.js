@@ -11,6 +11,8 @@ app.setPath('userData', path.join(root, 'userData'));
 fs.writeFileSync(path.join(root, 'main.txt'), 'main@mail.com|dummy-password\nmain2@mail.com|dummy-password2\n');
 fs.writeFileSync(path.join(root, 'aliases.txt'), 'first@mail.com\nsecond@mail.com\nfirst@mail.com\n');
 fs.writeFileSync(path.join(root, 'proxy.txt'), '127.0.0.1:8080\n');
+const retryRows = 'replay0@mail.com|replay-secret-0|retryexisting@mail.com|inbox_read_failed\nreplay1@mail.com|replay-secret-1|retryexisting2@mail.com|send_mail_failed\nreplay0@mail.com|replay-secret-0|retrymissing@mail.com|send_mail_failed\nreplay0@mail.com|replay-secret-0|retryexisting@mail.com|alias_cleanup_failed\n';
+fs.writeFileSync(path.join(root, 'retry-input.txt'), retryRows);
 MailComAliasClient.prototype.login = async () => {};
 MailComAliasClient.prototype.close = async () => {};
 MailComAliasClient.prototype.listAddresses = async () => [{ address: 'first@mail.com' }];
@@ -23,7 +25,7 @@ MailComAliasClient.prototype.addAlias = async alias => {
   return { status: alias.startsWith('first') ? 'added' : 'existing', message: 'Verified fixture' };
 };
 MailComAliasClient.prototype.removeAlias = async () => ({ status: 'removed', message: 'Đã xóa alias khỏi mail chính.' });
-dialog.showOpenDialog = async (_window, options) => ({ canceled: false, filePaths: [options.properties.includes('openDirectory') ? root : path.join(root, options.title.includes('credentials') ? 'main.txt' : options.title.includes('proxy.txt') ? 'proxy.txt' : 'aliases.txt')] });
+dialog.showOpenDialog = async (_window, options) => ({ canceled: false, filePaths: [options.properties.includes('openDirectory') ? root : path.join(root, options.title.includes('credentials') ? 'main.txt' : options.title.includes('proxy.txt') ? 'proxy.txt' : options.title.includes('fail.txt') ? 'retry-input.txt' : 'aliases.txt')] });
 
 async function run() {
   // Main uses the real Apple integration; substitute it before loading main.
@@ -48,9 +50,11 @@ async function run() {
     throw new Error(`Timed out: ${source}`);
   };
   await evaluate('window.mailcomAPI.config()');
-  for (const id of ['emailFile', 'aliasFile', 'proxyFile', 'outputRoot']) {
+  for (const id of ['emailFile', 'aliasFile', 'retryFile', 'proxyFile', 'outputRoot']) {
     assert.equal(await evaluate(`document.getElementById(${JSON.stringify(id)}).value`), '');
   }
+  assert.equal(await evaluate('document.getElementById("mode").value'), 'normal');
+  assert.equal(await evaluate('document.getElementById("retry-inputs").hidden'), true);
   assert.equal(await evaluate('document.getElementById("export-results").disabled'), false);
   await click('export-results');
   await waitFor('document.getElementById("message").textContent.includes("Hãy chọn thư mục kết quả")');
@@ -162,14 +166,55 @@ async function run() {
   assert(await evaluate('document.getElementById("input-export-status").textContent.includes("xóa 3 dòng alias và 1 dòng mail chính")'));
   await click('export-results');
   await waitFor('document.getElementById("input-export-status").textContent.includes("xóa 0 dòng alias và 0 dòng mail chính")');
+  // Switch modes: one failed-record file supplies both credentials and fixed aliases.
+  await evaluate('document.getElementById("mode").value = "retry"; document.getElementById("mode").dispatchEvent(new Event("change"))');
+  assert.equal(await evaluate('document.getElementById("normal-inputs").hidden'), true);
+  assert.equal(await evaluate('document.getElementById("retry-inputs").hidden'), false);
+  assert.equal(await evaluate('document.getElementById("start").textContent'), 'Bắt đầu chạy lại record lỗi');
+  await click('choose-retry');
+  const replayOwners = new Map([['retryexisting@mail.com', 'replay0@mail.com'], ['retrymissing@mail.com', 'replay0@mail.com'], ['retryexisting2@mail.com', 'replay1@mail.com']]);
+  const replayLogins = [], replayAdds = [], replayRemoves = [];
+  MailComAliasClient.prototype.login = async function (account) {
+    this.replayMain = account.email; replayLogins.push(account.email);
+    assert.equal(account.password, account.email === 'replay0@mail.com' ? 'replay-secret-0' : 'replay-secret-1');
+  };
+  MailComAliasClient.prototype.listAddresses = async () => [{ address: 'retryexisting@mail.com' }, { address: 'retryexisting2@mail.com' }];
+  MailComAliasClient.prototype.addAlias = async function (alias) {
+    assert.equal(replayOwners.get(alias), this.replayMain); replayAdds.push(alias); return { status: 'added' };
+  };
+  MailComAliasClient.prototype.removeAlias = async function (alias) {
+    assert.equal(replayOwners.get(alias), this.replayMain); replayRemoves.push(alias); return { status: 'removed' };
+  };
+  await click('start');
+  await waitFor('document.getElementById("status").textContent === "Đang xử lý"');
+  assert.equal(await evaluate('document.getElementById("mode").disabled'), true);
+  assert.equal(await evaluate('document.getElementById("choose-retry").disabled'), true);
+  await waitFor('document.getElementById("status").textContent === "Hoàn tất"');
+  assert.equal(await evaluate('document.getElementById("passwordChanged").textContent'), '3');
+  assert.equal(await evaluate('document.getElementById("passwordFailed").textContent'), '0');
+  assert.equal(await evaluate('document.querySelectorAll("#rows tr").length'), 3);
+  assert.equal(await evaluate('document.getElementById("mode").disabled'), false);
+  assert.equal(replayLogins.length, 2); assert.equal(new Set(replayLogins).size, 2);
+  assert.deepEqual(replayAdds, ['retrymissing@mail.com']); assert.equal(replayRemoves.length, 3);
+  assert.equal(fs.readFileSync(path.join(root, 'retry-input.txt'), 'utf8'), retryRows);
+  assert(!await evaluate('document.body.textContent.includes("replay-secret")'));
+  assert(!fs.readFileSync(path.join(root, 'alias-results.jsonl'), 'utf8').includes('replay-secret'));
+  await click('export-results');
+  await waitFor('document.getElementById("input-export-status").textContent.includes("xóa 4 record")');
+  assert.equal(fs.readFileSync(path.join(root, 'retry-input.txt'), 'utf8'), '');
+  assert.equal(fs.readFileSync(path.join(root, 'main.txt'), 'utf8'), 'main2@mail.com|dummy-password2\n');
   assert.deepEqual(errors, []);
   assert.equal(BrowserWindow.getAllWindows().length, 1, 'Request mode must not open account browser windows');
   win.setSize(1160, 1020);
+  await evaluate('window.scrollTo(0, 0)');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const setupScreenshot = path.join(root, 'retry-setup.png');
+  fs.writeFileSync(setupScreenshot, (await win.webContents.capturePage()).toPNG());
   await evaluate('document.getElementById("results-title").scrollIntoView({ block: "start" })');
   await new Promise(resolve => setTimeout(resolve, 150));
   const screenshot = path.join(root, 'preview.png');
   fs.writeFileSync(screenshot, (await win.webContents.capturePage()).toPNG());
-  console.log(`Electron UI tests passed. Screenshot: ${screenshot}`);
+  console.log(`Electron UI tests passed. Screenshots: ${setupScreenshot}, ${screenshot}`);
   for (const window of BrowserWindow.getAllWindows()) window.destroy();
   app.exit(0);
 }

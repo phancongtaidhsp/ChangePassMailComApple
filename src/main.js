@@ -53,20 +53,20 @@ function handle(channel, handler) {
   });
 }
 
-handle('app:config', () => ({ outputRoot: '', emailFile: '', aliasFile: '', proxyFile: '', ...(batch ? { snapshot: batch.snapshot() } : {}) }));
+handle('app:config', () => ({ outputRoot: '', emailFile: '', aliasFile: '', retryFile: '', proxyFile: '', ...(batch ? { snapshot: batch.snapshot() } : {}) }));
 handle('file:choose', async kind => {
   if (busy()) throw new Error('Chờ lượt đang chạy hoàn tất hoặc tạm dừng.');
-  if (!['email', 'alias', 'proxy', 'output'].includes(kind)) throw new Error('Loại file không hợp lệ.');
+  if (!['email', 'alias', 'retry', 'proxy', 'output'].includes(kind)) throw new Error('Loại file không hợp lệ.');
   const result = await dialog.showOpenDialog(win, kind === 'output'
     ? { title: 'Chọn thư mục lưu kết quả', properties: ['openDirectory', 'createDirectory'] }
-    : { title: kind === 'email' ? 'Chọn credentials.mailchinh.txt (email|password)' : kind === 'proxy' ? 'Chọn proxy.txt (mỗi dòng một proxy HTTP/HTTPS)' : 'Chọn mailphu.txt (mỗi dòng một alias)', properties: ['openFile'], filters: [{ name: 'Danh sách văn bản', extensions: ['txt'] }] });
+    : { title: kind === 'email' ? 'Chọn credentials.mailchinh.txt (email|password)' : kind === 'proxy' ? 'Chọn proxy.txt (mỗi dòng một proxy HTTP/HTTPS)' : kind === 'retry' ? 'Chọn fail.txt (mail chính|password mail chính|alias|mã lỗi)' : 'Chọn mailphu.txt (mỗi dòng một alias)', properties: ['openFile'], filters: [{ name: 'Danh sách văn bản', extensions: ['txt'] }] });
   return result.canceled ? null : result.filePaths[0];
 });
 handle('batch:start', options => {
   if (busy()) throw new Error('Một lượt đổi pass alias đang chạy.');
   if (batch?.snapshot().pendingWrites) throw new Error('Còn kết quả chưa ghi được. Khắc phục dung lượng/quyền ghi rồi bấm Thử ghi lại trước khi bắt đầu lượt mới.');
-  if (!options || typeof options.emailFile !== 'string' || typeof options.outputRoot !== 'string' ||
-      typeof options.aliasFile !== 'string' || typeof options.proxyFile !== 'string') throw new Error('Cấu hình không hợp lệ.');
+  if (!options || typeof options.outputRoot !== 'string' || typeof options.proxyFile !== 'string' ||
+      (options.mode === 'retry' ? typeof options.retryFile !== 'string' : typeof options.emailFile !== 'string' || typeof options.aliasFile !== 'string')) throw new Error('Cấu hình không hợp lệ.');
   if (!options.outputRoot.trim()) throw new Error('Hãy chọn thư mục kết quả.');
   batch = new AliasBatch(options, { sendMail, changePassword, onUpdate: update => {
     if (win && !win.isDestroyed()) win.webContents.send('batch:update', update);
